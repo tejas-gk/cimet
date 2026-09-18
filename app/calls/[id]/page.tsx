@@ -1,6 +1,7 @@
 "use client"
 
-import { AlertTriangleIcon, CheckCircle2Icon, CircleStopIcon, MicIcon, PhoneCallIcon, PhoneForwardedIcon, SendIcon } from "lucide-react"
+import { AlertTriangleIcon, CheckCircle2Icon, CircleStopIcon, ClipboardListIcon, Loader2Icon, MicIcon, PhoneCallIcon, PhoneForwardedIcon, SendIcon, ShieldCheckIcon, TimerIcon } from "lucide-react"
+import Link from "next/link"
 import { useParams } from "next/navigation"
 import * as React from "react"
 
@@ -11,7 +12,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useCimetAi } from "@/hooks/use-cimet-ai"
 import { useVoiceRecorder } from "@/hooks/use-voice-recorder"
-import type { HandoffReason } from "@/lib/cimet-ai-types"
+import type { AuditRun, HandoffReason } from "@/lib/cimet-ai-types"
 
 const reasons: Array<{ value: HandoffReason; label: string }> = [
   { value: "asked-for-human", label: "Asked for human" },
@@ -23,42 +24,105 @@ const reasons: Array<{ value: HandoffReason; label: string }> = [
 ]
 
 const MAX_RECORDING_MS = 30_000
+const IDLE_END_MS = 12_000
+
+function qaBadge(status: AuditRun["status"]) {
+  if (status === "auto-pass") return "border-emerald-500/40 text-emerald-300"
+  if (status === "hold") return "border-red-500/40 text-red-300"
+  if (status === "human-review") return "border-amber-500/40 text-amber-300"
+  return "border-[#34363a] text-zinc-400"
+}
 
 export default function CallDetailPage() {
   const params = useParams<{ id: string }>()
-  const { getCall, getJourney, startCall, sendTurn, triggerHandoff } = useCimetAi()
+  const { getCall, getJourney, startCall, sendTurn, triggerHandoff, endCallSilently, fetchCallAudit, runCallAuditNow } = useCimetAi()
   const recorder = useVoiceRecorder()
   const [answer, setAnswer] = React.useState("")
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const [note, setNote] = React.useState<string | null>(null)
   const [handoffReason, setHandoffReason] = React.useState<HandoffReason>("asked-for-human")
-  const autoStopTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const recordTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastActivityRef = React.useRef(Date.now())
+  const idleFiredRef = React.useRef(false)
+
+  // Post-call quality audit state
+  const [audit, setAudit] = React.useState<AuditRun | null>(null)
+  const [auditFetching, setAuditFetching] = React.useState(false)
 
   const call = getCall(params.id)
   const journey = call ? getJourney(call.journeyId) : null
   const currentField = journey?.fields.find((field) => field.key === call?.currentQuestionKey)
   const callActive = !!call && ["consent", "collecting"].includes(call.status)
 
+  // Hard max for any single recording.
   React.useEffect(() => {
     if (recorder.recording) {
-      autoStopTimer.current = setTimeout(() => {
-        void recorder.stop()
-      }, MAX_RECORDING_MS)
+      recordTimer.current = setTimeout(() => void recorder.stop(), MAX_RECORDING_MS)
     }
-    return () => {
-      if (autoStopTimer.current) clearTimeout(autoStopTimer.current)
-    }
+    return () => { if (recordTimer.current) clearTimeout(recordTimer.current) }
   }, [recorder.recording, recorder.stop])
 
+  React.useEffect(() => { if (recorder.error) setError(recorder.error) }, [recorder.error])
+
+  // Reset activity clock on each agent reply or user action.
+  React.useEffect(() => { lastActivityRef.current = Date.now() }, [call?.utterances.length, call?.status])
+
+  // Idle timer: a long pause from the user means stop.
   React.useEffect(() => {
-    if (recorder.error) setError(recorder.error)
-  }, [recorder.error])
+    if (!callActive) return
+    const iv = setInterval(() => {
+      if (!idleFiredRef.current && Date.now() - lastActivityRef.current > IDLE_END_MS) {
+        idleFiredRef.current = true
+        setNote("Long pause detected — wrapping up the call per policy.")
+        void endCallSilently(params.id).catch(() => setError("Failed to end call automatically"))
+      }
+    }, 2000)
+    return () => clearInterval(iv)
+  }, [callActive, params.id, endCallSilently])
+
+  // Whenever the call finishes, poll for its post-call audit and surface it.
+  React.useEffect(() => {
+    if (!call) return
+    if (callActive) { setAudit(null); setAuditFetching(false); return }
+    if (!call.endedAt) return
+    let cancelled = false
+    let attempts = 0
+    const poll = async () => {
+      const existing = await fetchCallAudit(call.id)
+      if (cancelled) return
+      if (existing) { setAudit(existing); setAuditFetching(false); return }
+      attempts += 1
+      if (attempts < 20) setTimeout(poll, 3000)
+      else setAuditFetching(false)
+    }
+    setAuditFetching(true)
+    void poll()
+    return () => { cancelled = true }
+  }, [call?.id, call?.endedAt, callActive, fetchCallAudit])
+
+  // --- handlers -----------------------------------------------------------
+
+  const sendRecording = React.useCallback(async (base64: string | null) => {
+    if (!base64 || !call) return
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await sendTurn(call.id, { audioBase64: base64 })
+      if (result.audioBase64) recorder.play(result.audioBase64)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "The agent could not process that recording")
+    } finally {
+      setBusy(false)
+    }
+  }, [call, sendTurn, recorder])
 
   const handleStart = async () => {
     setBusy(true)
     setError(null)
     try {
       const result = await startCall(call!.id)
+      lastActivityRef.current = Date.now()
       if (result.audioBase64) recorder.play(result.audioBase64)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start the call")
@@ -70,21 +134,12 @@ export default function CallDetailPage() {
   const handleVoice = async () => {
     if (recorder.recording) {
       const base64 = await recorder.stop()
-      if (!base64 || !call) return
-      setBusy(true)
-      setError(null)
-      try {
-        const result = await sendTurn(call.id, { audioBase64: base64 })
-        if (result.audioBase64) recorder.play(result.audioBase64)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "The agent could not process that recording")
-      } finally {
-        setBusy(false)
-      }
+      await sendRecording(base64)
       return
     }
     setError(null)
-    await recorder.start()
+    lastActivityRef.current = Date.now()
+    await recorder.start({ onAutoStop: (base64) => void sendRecording(base64) })
   }
 
   const handleText = async (value: string) => {
@@ -94,6 +149,7 @@ export default function CallDetailPage() {
     setError(null)
     try {
       const result = await sendTurn(call.id, { text })
+      lastActivityRef.current = Date.now()
       setAnswer("")
       if (result.audioBase64) recorder.play(result.audioBase64)
     } catch (err) {
@@ -102,6 +158,8 @@ export default function CallDetailPage() {
       setBusy(false)
     }
   }
+
+  // --- render -------------------------------------------------------------
 
   if (!call || !journey) {
     return (
@@ -153,6 +211,7 @@ export default function CallDetailPage() {
         </div>
 
         <div className="grid content-start gap-5">
+          {/* ─── Live talk controls ─── */}
           <div className="rounded-xl border border-[#27272a] bg-[#0d0d0f] p-4">
             <h3 className="font-medium">Live talk</h3>
             <p className="mt-1 text-xs text-zinc-500">
@@ -186,9 +245,13 @@ export default function CallDetailPage() {
                   </div>
                 </div>
 
+                {recorder.recording ? (
+                  <p className="text-center text-xs text-zinc-500">Recording — long silence will end the call.</p>
+                ) : null}
+
                 {call.status === "consent" ? (
                   <div className="grid gap-2 text-center text-xs text-zinc-500">
-                    The agent just asked for consent. Say “yes” or “no”, or tap:
+                    The agent just asked for consent. Say &ldquo;yes&rdquo; or &ldquo;no&rdquo;, or tap:
                     <div className="grid grid-cols-2 gap-2">
                       <Button size="sm" variant="outline" className="border-[#34363a] bg-[#111113] text-white" disabled={controlsDisabled} onClick={() => void handleText("Yes, that is okay.")}>
                         <CheckCircle2Icon className="size-4" /> Consent yes
@@ -209,6 +272,7 @@ export default function CallDetailPage() {
             ) : null}
 
             {error ? <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div> : null}
+            {note ? <div className="mt-3 rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 text-sm text-sky-200 flex items-center gap-2"><TimerIcon className="size-4" /> {note}</div> : null}
 
             {callActive ? (
               <form
@@ -224,7 +288,7 @@ export default function CallDetailPage() {
                   value={answer}
                   onChange={(event) => setAnswer(event.target.value)}
                   className="border-[#27272a] bg-[#111113] text-white"
-                  placeholder="Type the customer's spoken answer…"
+                  placeholder="Type the customer&apos;s spoken answer…"
                   disabled={controlsDisabled}
                 />
                 <Button type="submit" disabled={controlsDisabled || !answer.trim()}>
@@ -234,6 +298,44 @@ export default function CallDetailPage() {
             ) : null}
           </div>
 
+          {/* ─── Quality audit ─── */}
+          <div className="rounded-xl border border-[#27272a] bg-[#0d0d0f] p-4">
+            <h3 className="flex items-center gap-2 font-medium"><ShieldCheckIcon className="size-4" /> Quality audit</h3>
+            {audit ? (
+              <div className="mt-3 grid gap-3">
+                <div className="flex items-center justify-between">
+                  <Badge variant="outline" className={qaBadge(audit.status)}>{audit.status}</Badge>
+                  {typeof audit.confidence === "number" ? <span className="text-xs text-zinc-500">{audit.confidence}%</span> : null}
+                </div>
+                <p className="text-sm leading-6 text-zinc-300">{audit.aiSummary}</p>
+                <Button size="sm" variant="outline" className="border-[#34363a] bg-[#111113] text-white" asChild>
+                  <Link href={`/auditor/${audit.id}`}><ClipboardListIcon className="size-4" /> Open full audit</Link>
+                </Button>
+              </div>
+            ) : (
+              <div className="mt-3 grid gap-3 text-sm text-zinc-400">
+                {!callActive && call.endedAt ? (
+                  auditFetching ? (
+                    <p className="flex items-center gap-2"><Loader2Icon className="size-4 animate-spin" /> Recording the conversation and passing it to the auditor…</p>
+                  ) : (
+                    <>
+                      <p>The conversation was too short for a full audit.</p>
+                      <Button size="sm" disabled={busy} onClick={async () => {
+                        setBusy(true)
+                        try { setAudit(await runCallAuditNow(call.id)) } catch (err) { setError(err instanceof Error ? err.message : "Audit failed") } finally { setBusy(false) }
+                      }}>
+                        <ShieldCheckIcon className="size-4" /> Run audit again
+                      </Button>
+                    </>
+                  )
+                ) : (
+                  <p>The full conversation will be passed through the AI Quality Auditor automatically when the call ends.</p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ─── Journey fields ─── */}
           <div className="rounded-xl border border-[#27272a] bg-[#0d0d0f] p-4">
             <h3 className="font-medium">Journey fields</h3>
             <div className="mt-3 grid gap-2">
@@ -246,6 +348,7 @@ export default function CallDetailPage() {
             </div>
           </div>
 
+          {/* ─── Warm handoff ─── */}
           <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
             <div className="flex items-center gap-2 font-medium text-amber-200"><AlertTriangleIcon className="size-4" /> Warm handoff</div>
             <p className="mt-2 text-sm text-amber-100/70">Approving hands the current context bundle to a human agent.</p>

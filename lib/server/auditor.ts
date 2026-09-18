@@ -712,7 +712,7 @@ function buildSummary(checks: AuditCheck[], status: AuditDecision): string {
 
 export async function runAudit(input: {
   audio: Buffer
-  source: "upload" | "generated-demo"
+  source: "upload" | "generated-demo" | "voice-call"
   attributes: AuditLeadFacts
   persistAudio?: boolean
   leadId?: string

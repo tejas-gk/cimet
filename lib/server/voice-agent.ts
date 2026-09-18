@@ -24,6 +24,7 @@ import {
   updateJourney,
   updateJourneyFieldValue,
 } from "@/lib/server/db"
+import { queueCallAudit, saveTurnAudio } from "@/lib/server/call-audit"
 import type {
   CallSession,
   EnergyJourney,
@@ -81,6 +82,47 @@ export const RECORDING_DISCLOSURE =
 
 export function closingThanks(customerName: string) {
   return `That's everything I need, ${customerName}. Thank you for your time — your energy journey has been submitted successfully.`
+}
+
+/**
+ * Spoken when the user stays silent for a long stretch — a long pause means we
+ * simply stop. Shows the agent recognised the silence and wrapped up politely.
+ */
+export const SILENT_CLOSING =
+  "It sounds like there's no one there right now, so I'll end the call here. Your journey is saved and we'll pick it up whenever you're ready. Goodbye."
+
+/**
+ * Gracefully end an active call after a long customer pause. Writes a short
+ * AI closing line and marks the call completed, then fires the post-call audit.
+ */
+export function endCallSilently(db: DatabaseSync, callId: string): CallSession {
+  const call = callById(db, callId)
+  if (!call) throw new Error("Call not found")
+  if (!["consent", "collecting"].includes(call.status)) {
+    return callById(db, callId)!
+  }
+  db.exec("BEGIN TRANSACTION")
+  try {
+    saveUtterance(
+      db,
+      callId,
+      "ai",
+      SILENT_CLOSING,
+      call.utterances.length
+        ? call.utterances[call.utterances.length - 1].endMs + 800
+        : 0
+    )
+    updateCall(db, callId, {
+      status: "completed",
+      endedAt: new Date().toISOString(),
+    })
+    db.exec("COMMIT")
+  } catch (error) {
+    db.exec("ROLLBACK")
+    throw error
+  }
+  queueCallAudit(db, callId)
+  return callById(db, callId)!
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +191,7 @@ function buildUserPrompt(params: {
 // DB helpers
 // ---------------------------------------------------------------------------
 
-function callUtterances(db: DatabaseSync, callId: string): Utterance[] {
+export function callUtterances(db: DatabaseSync, callId: string): Utterance[] {
   const rows = db
     .prepare("SELECT * FROM utterances WHERE call_id = ? ORDER BY start_ms, id")
     .all(callId) as Array<Record<string, unknown>>
@@ -300,14 +342,32 @@ export async function processTurn(params: {
 
   // 1. Resolve the customer utterance: audio → real STT, or typed text.
   let customerText = params.text?.trim() ?? ""
+  let rawTurnAudio: Buffer | null = null
   if (params.audioBase64) {
     const audio = Buffer.from(params.audioBase64, "base64")
     if (audio.length === 0) throw new Error("Empty audio received")
+    rawTurnAudio = audio
     const stt = await speechToText({ audio, filename: "turn.wav" })
     customerText = stt.transcript.trim()
   }
+
+  // A long pause from the user means stop, not spin. End the call politely.
   if (!customerText) {
-    throw new Error("No speech or text detected in this turn")
+    endCallSilently(db, callId)
+    const closed = callById(db, callId)!
+    const last = closed.utterances[closed.utterances.length - 1]
+    let audioBase64: string | null = null
+    if (last && last.speaker === "ai") {
+      try {
+        audioBase64 = await synthesizeReply(last.text)
+      } catch (error) {
+        console.warn(
+          "[voice] TTS failed for silent-closing, continuing without audio:",
+          error instanceof Error ? error.message : error
+        )
+      }
+    }
+    return { call: closed, journey, audioBase64 }
   }
 
   const question = existing.consentRecorded
@@ -343,7 +403,8 @@ export async function processTurn(params: {
     const startedAtMs = transcript.length
       ? transcript[transcript.length - 1].endMs + 500
       : 0
-    saveUtterance(db, callId, "customer", customerText, startedAtMs)
+    const savedCustomer = saveUtterance(db, callId, "customer", customerText, startedAtMs)
+    if (rawTurnAudio) saveTurnAudio(callId, savedCustomer.id, rawTurnAudio)
     const aiStartMs = startedAtMs + 600
     const now = new Date().toISOString()
 
@@ -475,6 +536,9 @@ export async function processTurn(params: {
   }
 
   const finalCall = callById(db, callId)!
+  if (["completed", "declined", "handoff"].includes(finalCall.status)) {
+    queueCallAudit(db, callId)
+  }
   const last = finalCall.utterances[finalCall.utterances.length - 1]
   let audioBase64: string | null = null
   if (last && last.speaker === "ai") {
@@ -527,6 +591,7 @@ export function triggerHandoff(
     db.exec("ROLLBACK")
     throw error
   }
+  queueCallAudit(db, callId)
   return callById(db, callId)!
 }
 

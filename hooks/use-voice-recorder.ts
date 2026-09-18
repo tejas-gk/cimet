@@ -12,6 +12,19 @@ export function audioSrc(base64: string, mime = "audio/wav"): string {
   return `data:${mime};base64,${base64}`
 }
 
+export type StartOptions = {
+  /** Called with the (likely silent) recording when the mic is auto-stopped
+   *  after a sustained pause. Lets the caller submit the turn for STT, which
+   *  then gracefully ends the call when nothing was said. */
+  onAutoStop?: (base64: string | null) => void
+  /** Continuous silence needed before auto-stopping (ms). Default 3000. */
+  silenceMs?: number
+  /** Minimum captured audio before silence may stop the recording (ms). Default 1200. */
+  minRecordMs?: number
+  /** Energy threshold below which the input is treated as silence (0..1). Default 0.03. */
+  silenceLevel?: number
+}
+
 export function useVoiceRecorder() {
   const streamRef = React.useRef<MediaStream | null>(null)
   const recorderRef = React.useRef<MediaRecorder | null>(null)
@@ -21,6 +34,8 @@ export function useVoiceRecorder() {
   const startedAtRef = React.useRef<number>(0)
   const rafRef = React.useRef<number | null>(null)
   const playingRef = React.useRef<HTMLAudioElement | null>(null)
+  const silentSinceRef = React.useRef<number | null>(null)
+  const optsRef = React.useRef<StartOptions | null>(null)
   const [recording, setRecording] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [supported] = React.useState(
@@ -30,8 +45,10 @@ export function useVoiceRecorder() {
   const [durationMs, setDurationMs] = React.useState(0)
   const [error, setError] = React.useState<string | null>(null)
 
-  const start = React.useCallback(async () => {
+  const start = React.useCallback(async (opts?: StartOptions) => {
     setError(null)
+    optsRef.current = opts ?? null
+    silentSinceRef.current = null
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true },
@@ -67,11 +84,33 @@ export function useVoiceRecorder() {
         if (now - lastTick >= 120) {
           lastTick = now
           setDurationMs(now - startedAtRef.current)
+          let avg = 0
           if (analyserRef.current && dataRef.current) {
             analyserRef.current.getByteFrequencyData(dataRef.current)
-            const sum = dataRef.current.reduce((a, b) => a + b, 0)
-            const avg = sum / dataRef.current.length / 255
+            avg = dataRef.current.reduce((a, b) => a + b, 0) / dataRef.current.length / 255
             setLevel(Math.min(1, Math.max(0, avg * 3.2)))
+          }
+          // A long pause from the user means stop only: auto-stop on sustained
+          // silence (once some audio has been captured) and hand it off.
+          const opts = optsRef.current
+          const silenceLevel = opts?.silenceLevel ?? 0.03
+          if (opts && analyserRef.current && dataRef.current && avg < silenceLevel) {
+            if (silentSinceRef.current === null) {
+              silentSinceRef.current = now
+            } else if (
+              now - silentSinceRef.current >= (opts.silenceMs ?? 3000) &&
+              now - startedAtRef.current >= (opts.minRecordMs ?? 1200)
+            ) {
+              silentSinceRef.current = null
+              const onAutoStop = opts.onAutoStop
+              void (async () => {
+                const base64 = await stop()
+                onAutoStop?.(base64)
+              })()
+              return
+            }
+          } else {
+            silentSinceRef.current = null
           }
         }
         rafRef.current = requestAnimationFrame(tick)
@@ -105,6 +144,7 @@ export function useVoiceRecorder() {
         recorderRef.current = null
         analyserRef.current = null
         dataRef.current = null
+        silentSinceRef.current = null
         setRecording(false)
         setLevel(0)
         setBusy(false)

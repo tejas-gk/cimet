@@ -144,6 +144,41 @@ export function useCimetAi() {
     [refresh]
   )
 
+  /** Gracefully end an active call after a long customer pause. */
+  const endCallSilently = React.useCallback(
+    async (callId: string): Promise<CallSession> => {
+      const call = await api<CallSession>(`/api/calls/${callId}/end`, {
+        method: "POST",
+        body: {},
+      })
+      await refresh()
+      return call
+    },
+    [refresh]
+  )
+
+  /** Fetch the quality audit already produced for a finished call (null if none yet). */
+  const fetchCallAudit = React.useCallback(async (callId: string): Promise<AuditRun | null> => {
+    try {
+      return await api<AuditRun>(`/api/calls/${callId}/audit`)
+    } catch {
+      return null
+    }
+  }, [])
+
+  /** Run the full conversation through the AI Quality Auditor right now. */
+  const runCallAuditNow = React.useCallback(
+    async (callId: string): Promise<AuditRun | null> => {
+      const audit = await api<AuditRun>(`/api/calls/${callId}/audit`, {
+        method: "POST",
+        body: {},
+      })
+      await refresh()
+      return audit
+    },
+    [refresh]
+  )
+
   const overrideAudit = React.useCallback(
     async (auditId: string, decision: AuditDecision, reason: string) => {
       await api<AuditRun>(`/api/audits/${auditId}/override`, {
@@ -207,6 +242,9 @@ export function useCimetAi() {
     startCall,
     sendTurn,
     triggerHandoff,
+    endCallSilently,
+    fetchCallAudit,
+    runCallAuditNow,
     overrideAudit,
     uploadAudit,
     generateDemo,
