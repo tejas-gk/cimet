@@ -15,22 +15,26 @@ const VALID_REASONS: HandoffReason[] = [
   "repeated-misunderstanding",
 ]
 
-export const POST = handle(async (req: Request, ctx: RouteContext<"/api/calls/[id]/handoff">) => {
-  const { id } = await ctx.params
-  const body = (await req.json().catch(() => null)) as { reason?: string } | null
-  const reason = body?.reason ?? ""
-  if (!VALID_REASONS.includes(reason as HandoffReason)) {
-    return apiError("Invalid handoff reason", 400, "invalid_reason")
-  }
-
-  const db = getDb()
-  try {
-    const call = triggerHandoff(db, id, reason as HandoffReason)
-    return json({ data: call })
-  } catch (error) {
-    if (error instanceof Error && error.message === "Call not found") {
-      return apiError("Call not found", 404, "not_found")
+export const POST = handle(
+  async (req: Request, ctx: RouteContext<"/api/calls/[id]/handoff">) => {
+    const { id } = await ctx.params
+    const body = (await req.json().catch(() => null)) as {
+      reason?: string
+    } | null
+    const reason = body?.reason ?? ""
+    if (!VALID_REASONS.includes(reason as HandoffReason)) {
+      return apiError("Invalid handoff reason", 400, "invalid_reason")
     }
-    throw error
+
+    const db = getDb()
+    try {
+      const result = await triggerHandoff(db, id, reason as HandoffReason)
+      return json({ data: result })
+    } catch (error) {
+      if (error instanceof Error && error.message === "Call not found") {
+        return apiError("Call not found", 404, "not_found")
+      }
+      throw error
+    }
   }
-})
+)

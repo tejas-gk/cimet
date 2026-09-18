@@ -670,6 +670,58 @@ export function createCall(db: DatabaseSync, call: {
   ).run(call.id, call.journeyId, call.status, call.provider)
 }
 
+export function createJourneyWithCall(db: DatabaseSync, journey: {
+  id: string
+  customerName: string
+  phone: string
+  email: string
+  retailer: string
+  state: string
+  abandonStep: string
+  fields: Array<{
+    key: string
+    label: string
+    value: string | null
+    required: boolean
+  }>
+  callId: string
+}) {
+  db.prepare(
+    `INSERT INTO journeys (id, customer_name, phone, email, retailer, state, status, abandon_step, do_not_call)
+     VALUES (?, ?, ?, ?, ?, ?, 'dropped', ?, 0)`
+  ).run(
+    journey.id,
+    journey.customerName,
+    journey.phone,
+    journey.email,
+    journey.retailer,
+    journey.state,
+    journey.abandonStep
+  )
+  const insertField = db.prepare(
+    `INSERT INTO journey_fields (id, journey_id, field_key, label, value, required, collected_by, position)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  )
+  journey.fields.forEach((field, position) => {
+    insertField.run(
+      `${journey.id}-field-${field.key}`,
+      journey.id,
+      field.key,
+      field.label,
+      field.value,
+      field.required ? 1 : 0,
+      field.value ? "customer" : null,
+      position
+    )
+  })
+  createCall(db, {
+    id: journey.callId,
+    journeyId: journey.id,
+    status: "queued",
+    provider: "sarvam",
+  })
+}
+
 export function updateCall(
   db: DatabaseSync,
   callId: string,

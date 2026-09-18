@@ -10,16 +10,18 @@ export const dynamic = "force-dynamic"
  * acknowledges the silence, wraps up politely and stops. The post-call AI
  * Quality Auditor runs on the full conversation automatically.
  */
-export const POST = handle(async (_req: Request, ctx: RouteContext<"/api/calls/[id]/end">) => {
-  const { id } = await ctx.params
-  const db = getDb()
-  try {
-    const call = endCallSilently(db, id)
-    return json({ data: call })
-  } catch (error) {
-    if (error instanceof Error && error.message === "Call not found") {
-      return apiError("Call not found", 404, "not_found")
+export const POST = handle(
+  async (_req: Request, ctx: RouteContext<"/api/calls/[id]/end">) => {
+    const { id } = await ctx.params
+    const db = getDb()
+    try {
+      const result = await endCallSilently(db, id)
+      return json({ data: result })
+    } catch (error) {
+      if (error instanceof Error && error.message === "Call not found") {
+        return apiError("Call not found", 404, "not_found")
+      }
+      throw error
     }
-    throw error
   }
-})
+)

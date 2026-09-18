@@ -1,6 +1,14 @@
 "use client"
 
-import { ArrowRightIcon, CheckCircle2Icon, ClipboardCheckIcon, Loader2Icon, PauseCircleIcon, SearchIcon, UploadIcon, Wand2Icon } from "lucide-react"
+import {
+  ArrowRightIcon,
+  CheckCircle2Icon,
+  ClipboardCheckIcon,
+  Loader2Icon,
+  PauseCircleIcon,
+  SearchIcon,
+  UploadIcon,
+} from "lucide-react"
 import Link from "next/link"
 import * as React from "react"
 
@@ -23,7 +31,7 @@ function decisionIcon(status: string) {
 }
 
 export default function AuditorPage() {
-  const { audits, dashboard, uploadAudit, generateDemo } = useCimetAi()
+  const { audits, dashboard, uploadAudit } = useCimetAi()
   const [busy, setBusy] = React.useState(false)
   const [notice, setNotice] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
@@ -47,22 +55,11 @@ export default function AuditorPage() {
     if (customerEmail.trim()) form.append("customerEmail", customerEmail.trim())
     try {
       const audit = await uploadAudit(form)
-      setNotice(`Audit ${audit.id} completed: ${audit.status} (${audit.confidence}% confidence).`)
+      setNotice(
+        `Audit ${audit.id} completed: ${audit.status} (${audit.confidence}% confidence).`
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed")
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const handleGenerate = async () => {
-    setBusy(true)
-    setError(null)
-    setNotice(null)
-    try {
-      await generateDemo((msg) => setNotice(msg))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Demo generation failed")
     } finally {
       setBusy(false)
     }
@@ -72,10 +69,19 @@ export default function AuditorPage() {
     <CimetAiShell>
       <div className="mx-auto grid max-w-7xl gap-5">
         <div className="grid gap-2">
-          <Badge variant="outline" className="w-fit border-violet-500/30 bg-violet-500/10 text-violet-200">Project 2 · AI Quality Auditor</Badge>
-          <h2 className="text-2xl font-semibold tracking-tight">Completed-call audits</h2>
+          <Badge
+            variant="outline"
+            className="w-fit border-violet-500/30 bg-violet-500/10 text-violet-200"
+          >
+            Project 2 · AI Quality Auditor
+          </Badge>
+          <h2 className="text-2xl font-semibold tracking-tight">
+            Completed-call audits
+          </h2>
           <p className="max-w-3xl text-sm text-zinc-400">
-            Real recordings are transcribed by Sarvam STT, speaker-attributed, then checked against script, CRM and retailer rules by the LLM before routing to auto-pass, hold or human review.
+            Real recordings are transcribed by Sarvam STT, speaker-attributed,
+            then checked against script, CRM and retailer rules by the LLM
+            before routing to auto-pass, hold or human review.
           </p>
         </div>
 
@@ -87,9 +93,15 @@ export default function AuditorPage() {
         </div>
 
         <div className="grid gap-5 lg:grid-cols-2">
-          <form onSubmit={handleUpload} className="rounded-xl border border-[#27272a] bg-[#0d0d0f] p-4">
+          <form
+            onSubmit={handleUpload}
+            className="rounded-xl border border-[#27272a] bg-[#0d0d0f] p-4"
+          >
             <h3 className="font-medium">Audit a real recording</h3>
-            <p className="mt-1 text-xs text-zinc-500">Short WAV/MP3 of an actual call (synchronous STT handles under 30s).</p>
+            <p className="mt-1 text-xs text-zinc-500">
+              Short WAV/MP3 of an actual call (synchronous STT handles under
+              30s).
+            </p>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               <label className="grid gap-1 text-xs text-zinc-500">
                 Audio file
@@ -102,15 +114,29 @@ export default function AuditorPage() {
               </label>
               <label className="grid gap-1 text-xs text-zinc-500">
                 Lead name
-                <Input value={leadName} onChange={(event) => setLeadName(event.target.value)} required className="border-[#27272a] bg-[#111113] text-white" />
+                <Input
+                  value={leadName}
+                  onChange={(event) => setLeadName(event.target.value)}
+                  required
+                  className="border-[#27272a] bg-[#111113] text-white"
+                />
               </label>
               <label className="grid gap-1 text-xs text-zinc-500">
                 Agent name
-                <Input value={agentName} onChange={(event) => setAgentName(event.target.value)} required className="border-[#27272a] bg-[#111113] text-white" />
+                <Input
+                  value={agentName}
+                  onChange={(event) => setAgentName(event.target.value)}
+                  required
+                  className="border-[#27272a] bg-[#111113] text-white"
+                />
               </label>
               <label className="grid gap-1 text-xs text-zinc-500">
                 Retailer
-                <select value={retailer} onChange={(event) => setRetailer(event.target.value)} className="rounded-md border border-[#27272a] bg-[#111113] px-3 py-1.5 text-sm text-white">
+                <select
+                  value={retailer}
+                  onChange={(event) => setRetailer(event.target.value)}
+                  className="rounded-md border border-[#27272a] bg-[#111113] px-3 py-1.5 text-sm text-white"
+                >
                   <option>EnergyAustralia</option>
                   <option>AGL</option>
                   <option>Origin</option>
@@ -118,50 +144,103 @@ export default function AuditorPage() {
               </label>
               <label className="grid gap-1 text-xs text-zinc-500 md:col-span-2">
                 Customer email on file (optional — enables the CRM email check)
-                <Input value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} placeholder="alice@acme.com" className="border-[#27272a] bg-[#111113] text-white" />
+                <Input
+                  value={customerEmail}
+                  onChange={(event) => setCustomerEmail(event.target.value)}
+                  placeholder="alice@acme.com"
+                  className="border-[#27272a] bg-[#111113] text-white"
+                />
               </label>
             </div>
             <Button type="submit" className="mt-3" disabled={busy || !file}>
-              {busy ? <Loader2Icon className="size-4 animate-spin" /> : <UploadIcon className="size-4" />} Run audit pipeline
+              {busy ? (
+                <Loader2Icon className="size-4 animate-spin" />
+              ) : (
+                <UploadIcon className="size-4" />
+              )}{" "}
+              Run audit pipeline
             </Button>
           </form>
 
           <div className="rounded-xl border border-[#27272a] bg-[#0d0d0f] p-4">
-            <h3 className="font-medium">Generate real test recordings</h3>
+            <h3 className="font-medium">Post-call review queue</h3>
             <p className="mt-1 text-xs text-zinc-500">
-              Composes 3 sales calls with Sarvam TTS (agent + customer voices), then runs the real STT + LLM audit pipeline on each so the QA dashboard has real data. Clearly labelled as generated fixtures.
+              Completed voice-agent calls are stored in SQLite, assembled into
+              recordings, audited, then fetched here from the database for human
+              review.
             </p>
-            <Button className="mt-3 border-[#34363a] bg-[#111113] text-white" variant="outline" onClick={handleGenerate} disabled={busy}>
-              {busy ? <Loader2Icon className="size-4 animate-spin" /> : <Wand2Icon className="size-4" />} Generate + audit test calls
-            </Button>
           </div>
         </div>
 
-        {error ? <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div> : null}
-        {notice ? <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200">{notice}</div> : null}
+        {error ? (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
+            {error}
+          </div>
+        ) : null}
+        {notice ? (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200">
+            {notice}
+          </div>
+        ) : null}
 
         <div className="overflow-hidden rounded-xl border border-[#27272a] bg-[#0b0b0c]">
-          {audits.length === 0 ? <div className="p-6 text-sm text-zinc-500">No audits yet. Upload a recording or generate the test calls above.</div> : null}
+          {audits.length === 0 ? (
+            <div className="p-6 text-sm text-zinc-500">
+              No audits yet. Upload a recording or complete a voice-agent call.
+            </div>
+          ) : null}
           {audits.map((audit) => {
-            const failures = audit.checks.filter((check) => check.verdict === "fail").length
+            const failures = audit.checks.filter(
+              (check) => check.verdict === "fail"
+            ).length
             return (
-              <div key={audit.id} className="grid gap-3 border-b border-[#202023] p-4 last:border-b-0 lg:grid-cols-[1.2fr_1fr_auto] lg:items-center">
+              <div
+                key={audit.id}
+                className="grid gap-3 border-b border-[#202023] p-4 last:border-b-0 lg:grid-cols-[1.2fr_1fr_auto] lg:items-center"
+              >
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="font-medium text-zinc-100">{audit.leadName}</h3>
-                    <Badge variant="outline" className={decisionClass(audit.status)}>{decisionIcon(audit.status)} {audit.status}</Badge>
+                    <h3 className="font-medium text-zinc-100">
+                      {audit.leadName}
+                    </h3>
+                    <Badge
+                      variant="outline"
+                      className={decisionClass(audit.status)}
+                    >
+                      {decisionIcon(audit.status)} {audit.status}
+                    </Badge>
                   </div>
-                  <div className="mt-1 text-sm text-zinc-500">Agent {audit.agentName} · {audit.retailer}</div>
-                  <div className="mt-2 text-xs text-zinc-400">{audit.aiSummary}</div>
+                  <div className="mt-1 text-sm text-zinc-500">
+                    Agent {audit.agentName} · {audit.retailer}
+                  </div>
+                  <div className="mt-2 text-xs text-zinc-400">
+                    {audit.aiSummary}
+                  </div>
                 </div>
                 <div className="grid gap-1 text-xs text-zinc-400">
-                  <div>Checks: <span className="text-zinc-200">{audit.checks.length}</span></div>
-                  <div>Failures: <span className="text-zinc-200">{failures}</span></div>
-                  <div>Confidence: <span className="text-zinc-200">{audit.confidence}%</span></div>
+                  <div>
+                    Checks:{" "}
+                    <span className="text-zinc-200">{audit.checks.length}</span>
+                  </div>
+                  <div>
+                    Failures: <span className="text-zinc-200">{failures}</span>
+                  </div>
+                  <div>
+                    Confidence:{" "}
+                    <span className="text-zinc-200">{audit.confidence}%</span>
+                  </div>
                 </div>
                 <div className="flex justify-start lg:justify-end">
-                  <Button size="sm" variant="outline" className="border-[#34363a] bg-[#111113] text-white" asChild>
-                    <Link href={`/auditor/${audit.id}`}><ClipboardCheckIcon className="size-4" /> Review <ArrowRightIcon className="size-4" /></Link>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-[#34363a] bg-[#111113] text-white"
+                    asChild
+                  >
+                    <Link href={`/auditor/${audit.id}`}>
+                      <ClipboardCheckIcon className="size-4" /> Review{" "}
+                      <ArrowRightIcon className="size-4" />
+                    </Link>
                   </Button>
                 </div>
               </div>

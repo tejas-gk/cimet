@@ -19,13 +19,15 @@ import {
   createHandoff,
   createUtterance,
   getJourney,
+  listAudits,
   listCalls,
   updateCall,
   updateJourney,
   updateJourneyFieldValue,
 } from "@/lib/server/db"
-import { queueCallAudit, saveTurnAudio } from "@/lib/server/call-audit"
+import { runCallAudit, saveTurnAudio } from "@/lib/server/call-audit"
 import type {
+  AuditRun,
   CallSession,
   EnergyJourney,
   EnergyJourneyField,
@@ -91,15 +93,40 @@ export function closingThanks(customerName: string) {
 export const SILENT_CLOSING =
   "It sounds like there's no one there right now, so I'll end the call here. Your journey is saved and we'll pick it up whenever you're ready. Goodbye."
 
+async function auditFinishedCall(
+  db: DatabaseSync,
+  callId: string
+): Promise<AuditRun | null> {
+  const existing =
+    listAudits(db).find((audit) => audit.leadId === callId) ?? null
+  if (existing) return existing
+  try {
+    return await runCallAudit(db, callId)
+  } catch (error) {
+    console.error(
+      `[voice] Post-call audit failed for ${callId}:`,
+      error instanceof Error ? error.message : error
+    )
+    return null
+  }
+}
+
 /**
  * Gracefully end an active call after a long customer pause. Writes a short
  * AI closing line and marks the call completed, then fires the post-call audit.
  */
-export function endCallSilently(db: DatabaseSync, callId: string): CallSession {
+export async function endCallSilently(
+  db: DatabaseSync,
+  callId: string
+): Promise<{ call: CallSession; audit: AuditRun | null }> {
   const call = callById(db, callId)
   if (!call) throw new Error("Call not found")
   if (!["consent", "collecting"].includes(call.status)) {
-    return callById(db, callId)!
+    const current = callById(db, callId)!
+    return {
+      call: current,
+      audit: current.endedAt ? await auditFinishedCall(db, callId) : null,
+    }
   }
   db.exec("BEGIN TRANSACTION")
   try {
@@ -121,8 +148,8 @@ export function endCallSilently(db: DatabaseSync, callId: string): CallSession {
     db.exec("ROLLBACK")
     throw error
   }
-  queueCallAudit(db, callId)
-  return callById(db, callId)!
+  const finished = callById(db, callId)!
+  return { call: finished, audit: await auditFinishedCall(db, callId) }
 }
 
 // ---------------------------------------------------------------------------
@@ -240,8 +267,7 @@ function plausibleValue(field: EnergyJourneyField, value: string): boolean {
   const label = field.label.toLowerCase()
   if (label.includes("postcode") || label.includes("zip"))
     return /^\d{4}(-\d{4})?$/.test(v)
-  if (label.includes("email"))
-    return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)
+  if (label.includes("email")) return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)
   if (label.includes("phone") || label.includes("mobile"))
     return /^\+?[\d\s()-]{8,}$/.test(v)
   if (label.includes("date") || label.includes("move-in")) return v.length >= 4
@@ -283,7 +309,10 @@ export async function startCall(
   const journey = getJourney(db, existing.journeyId)
   if (!journey) throw new Error("Journey not found")
 
-  if (existing.status === "queued") {
+  if (
+    ["queued", "ringing"].includes(existing.status) &&
+    existing.utterances.length === 0
+  ) {
     db.exec("BEGIN TRANSACTION")
     try {
       saveUtterance(db, callId, "ai", RECORDING_DISCLOSURE, 0)
@@ -317,7 +346,11 @@ function buildHandoff(
     collected: collectedFields(journey),
     remaining: remainingFields(journey),
   })
-  updateCall(db, callId, { status: "handoff", safetyScore })
+  updateCall(db, callId, {
+    status: "handoff",
+    safetyScore,
+    endedAt: new Date().toISOString(),
+  })
 }
 
 /**
@@ -329,11 +362,20 @@ export async function processTurn(params: {
   callId: string
   text?: string
   audioBase64?: string
-}): Promise<{ call: CallSession; journey: EnergyJourney; audioBase64: string | null }> {
+}): Promise<{
+  call: CallSession
+  journey: EnergyJourney
+  audioBase64: string | null
+  audit?: AuditRun | null
+}> {
   const { db, callId } = params
   const existing = callById(db, callId)
   if (!existing) throw new Error("Call not found")
-  if (existing.status === "completed" || existing.status === "declined" || existing.status === "handoff") {
+  if (
+    existing.status === "completed" ||
+    existing.status === "declined" ||
+    existing.status === "handoff"
+  ) {
     throw new Error(`Call is already ${existing.status}`)
   }
 
@@ -353,9 +395,8 @@ export async function processTurn(params: {
 
   // A long pause from the user means stop, not spin. End the call politely.
   if (!customerText) {
-    endCallSilently(db, callId)
-    const closed = callById(db, callId)!
-    const last = closed.utterances[closed.utterances.length - 1]
+    const closed = await endCallSilently(db, callId)
+    const last = closed.call.utterances[closed.call.utterances.length - 1]
     let audioBase64: string | null = null
     if (last && last.speaker === "ai") {
       try {
@@ -367,11 +408,11 @@ export async function processTurn(params: {
         )
       }
     }
-    return { call: closed, journey, audioBase64 }
+    return { call: closed.call, journey, audioBase64, audit: closed.audit }
   }
 
   const question = existing.consentRecorded
-    ? fieldByKey(journey, existing.currentQuestionKey)?.label ?? null
+    ? (fieldByKey(journey, existing.currentQuestionKey)?.label ?? null)
     : null
   const transcript = callUtterances(db, callId)
 
@@ -403,7 +444,13 @@ export async function processTurn(params: {
     const startedAtMs = transcript.length
       ? transcript[transcript.length - 1].endMs + 500
       : 0
-    const savedCustomer = saveUtterance(db, callId, "customer", customerText, startedAtMs)
+    const savedCustomer = saveUtterance(
+      db,
+      callId,
+      "customer",
+      customerText,
+      startedAtMs
+    )
     if (rawTurnAudio) saveTurnAudio(callId, savedCustomer.id, rawTurnAudio)
     const aiStartMs = startedAtMs + 600
     const now = new Date().toISOString()
@@ -424,8 +471,7 @@ export async function processTurn(params: {
         db,
         callId,
         "ai",
-        replyText ||
-          "No problem at all. Thank you for your time. Goodbye.",
+        replyText || "No problem at all. Thank you for your time. Goodbye.",
         aiStartMs
       )
       updateCall(db, callId, {
@@ -536,8 +582,9 @@ export async function processTurn(params: {
   }
 
   const finalCall = callById(db, callId)!
+  let audit: AuditRun | null = null
   if (["completed", "declined", "handoff"].includes(finalCall.status)) {
-    queueCallAudit(db, callId)
+    audit = await auditFinishedCall(db, callId)
   }
   const last = finalCall.utterances[finalCall.utterances.length - 1]
   let audioBase64: string | null = null
@@ -555,14 +602,15 @@ export async function processTurn(params: {
     call: finalCall,
     journey: getJourney(db, journey.id)!,
     audioBase64,
+    audit,
   }
 }
 
-export function triggerHandoff(
+export async function triggerHandoff(
   db: DatabaseSync,
   callId: string,
   reason: HandoffReason
-): CallSession {
+): Promise<{ call: CallSession; audit: AuditRun | null }> {
   const call = callById(db, callId)
   if (!call) throw new Error("Call not found")
   const journey = getJourney(db, call.journeyId)
@@ -591,8 +639,8 @@ export function triggerHandoff(
     db.exec("ROLLBACK")
     throw error
   }
-  queueCallAudit(db, callId)
-  return callById(db, callId)!
+  const finalCall = callById(db, callId)!
+  return { call: finalCall, audit: await auditFinishedCall(db, callId) }
 }
 
 /** True if there is nothing left to collect for this journey. */

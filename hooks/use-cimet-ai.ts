@@ -9,6 +9,7 @@ import type {
   CallSession,
   HandoffReason,
 } from "@/lib/cimet-ai-types"
+import type { PhoneProviderId } from "@/lib/server/phone/types"
 
 export type TurnInput = {
   text?: string
@@ -19,6 +20,13 @@ export type VoiceTurnResult = {
   call: CallSession
   journey: EnergyJourney
   audioBase64: string | null
+  audit?: AuditRun | null
+}
+
+export type PhoneDialResult = {
+  provider: PhoneProviderId
+  providerCallId: string
+  call: CallSession
 }
 
 type DashboardMetrics = {
@@ -38,12 +46,15 @@ async function api<T>(path: string, options: FetchOptions = {}): Promise<T> {
     headers: options.body ? { "Content-Type": "application/json" } : undefined,
     body: options.body ? JSON.stringify(options.body) : undefined,
   })
-  const payload = (await response.json().catch(() => null)) as
-    | { data: T; message?: string; error?: { message: string; code: string } }
-    | null
+  const payload = (await response.json().catch(() => null)) as {
+    data: T
+    message?: string
+    error?: { message: string; code: string }
+  } | null
 
   if (!response.ok) {
-    const message = payload?.error?.message ?? `Request failed (${response.status})`
+    const message =
+      payload?.error?.message ?? `Request failed (${response.status})`
     throw new Error(message)
   }
   return (payload?.data ?? null) as T
@@ -69,12 +80,15 @@ export function useCimetAi() {
   const refresh = React.useCallback(async () => {
     setRefreshing(true)
     try {
-      const [journeyData, callData, auditData, dashboardData] = await Promise.all([
-        api<EnergyJourney[]>("/api/journeys"),
-        api<Array<CallSession & { journey: EnergyJourney | null }>>("/api/calls"),
-        api<AuditRun[]>("/api/audits"),
-        api<DashboardMetrics>("/api/dashboard"),
-      ])
+      const [journeyData, callData, auditData, dashboardData] =
+        await Promise.all([
+          api<EnergyJourney[]>("/api/journeys"),
+          api<Array<CallSession & { journey: EnergyJourney | null }>>(
+            "/api/calls"
+          ),
+          api<AuditRun[]>("/api/audits"),
+          api<DashboardMetrics>("/api/dashboard"),
+        ])
       setJourneys(journeyData)
       setCalls(callData)
       setAudits(auditData)
@@ -135,36 +149,48 @@ export function useCimetAi() {
 
   const triggerHandoff = React.useCallback(
     async (callId: string, reason: HandoffReason) => {
-      await api<CallSession>(`/api/calls/${callId}/handoff`, {
-        method: "POST",
-        body: { reason },
-      })
+      const result = await api<{ call: CallSession; audit: AuditRun | null }>(
+        `/api/calls/${callId}/handoff`,
+        {
+          method: "POST",
+          body: { reason },
+        }
+      )
       await refresh()
+      return result
     },
     [refresh]
   )
 
   /** Gracefully end an active call after a long customer pause. */
   const endCallSilently = React.useCallback(
-    async (callId: string): Promise<CallSession> => {
-      const call = await api<CallSession>(`/api/calls/${callId}/end`, {
-        method: "POST",
-        body: {},
-      })
+    async (
+      callId: string
+    ): Promise<{ call: CallSession; audit: AuditRun | null }> => {
+      const result = await api<{ call: CallSession; audit: AuditRun | null }>(
+        `/api/calls/${callId}/end`,
+        {
+          method: "POST",
+          body: {},
+        }
+      )
       await refresh()
-      return call
+      return result
     },
     [refresh]
   )
 
   /** Fetch the quality audit already produced for a finished call (null if none yet). */
-  const fetchCallAudit = React.useCallback(async (callId: string): Promise<AuditRun | null> => {
-    try {
-      return await api<AuditRun>(`/api/calls/${callId}/audit`)
-    } catch {
-      return null
-    }
-  }, [])
+  const fetchCallAudit = React.useCallback(
+    async (callId: string): Promise<AuditRun | null> => {
+      try {
+        return await api<AuditRun>(`/api/calls/${callId}/audit`)
+      } catch {
+        return null
+      }
+    },
+    []
+  )
 
   /** Run the full conversation through the AI Quality Auditor right now. */
   const runCallAuditNow = React.useCallback(
@@ -175,6 +201,21 @@ export function useCimetAi() {
       })
       await refresh()
       return audit
+    },
+    [refresh]
+  )
+
+  const dialPhoneCall = React.useCallback(
+    async (
+      callId: string,
+      provider: PhoneProviderId
+    ): Promise<PhoneDialResult> => {
+      const result = await api<PhoneDialResult>(`/api/calls/${callId}/phone`, {
+        method: "POST",
+        body: { provider },
+      })
+      await refresh()
+      return result
     },
     [refresh]
   )
@@ -196,33 +237,17 @@ export function useCimetAi() {
         method: "POST",
         body: form,
       })
-      const payload = (await response.json().catch(() => null)) as
-        | { data?: AuditRun; error?: { message: string } }
-        | null
+      const payload = (await response.json().catch(() => null)) as {
+        data?: AuditRun
+        error?: { message: string }
+      } | null
       if (!response.ok) {
-        throw new Error(payload?.error?.message ?? `Upload failed (${response.status})`)
+        throw new Error(
+          payload?.error?.message ?? `Upload failed (${response.status})`
+        )
       }
       await refresh()
       return (payload?.data ?? null) as AuditRun
-    },
-    [refresh]
-  )
-
-  const generateDemo = React.useCallback(
-    async (message: (msg: string) => void) => {
-      const response = await fetch("/api/demo/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scenario: "all" }),
-      })
-      const payload = (await response.json().catch(() => null)) as
-        | { message?: string; error?: { message: string } }
-        | null
-      if (!response.ok) {
-        throw new Error(payload?.error?.message ?? `Demo generation failed (${response.status})`)
-      }
-      if (payload?.message) message(payload.message)
-      await refresh()
     },
     [refresh]
   )
@@ -245,8 +270,8 @@ export function useCimetAi() {
     endCallSilently,
     fetchCallAudit,
     runCallAuditNow,
+    dialPhoneCall,
     overrideAudit,
     uploadAudit,
-    generateDemo,
   }
 }

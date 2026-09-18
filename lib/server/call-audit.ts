@@ -30,7 +30,11 @@ export function turnAudioPath(callId: string, utteranceId: string): string {
   return path.join(CALL_AUDIO_DIR, callId, `${utteranceId}.wav`)
 }
 
-export function saveTurnAudio(callId: string, utteranceId: string, audio: Buffer) {
+export function saveTurnAudio(
+  callId: string,
+  utteranceId: string,
+  audio: Buffer
+) {
   const dir = path.join(CALL_AUDIO_DIR, callId)
   mkdirSync(dir, { recursive: true })
   writeFileSync(turnAudioPath(callId, utteranceId), audio)
@@ -40,7 +44,9 @@ export function saveTurnAudio(callId: string, utteranceId: string, audio: Buffer
 const auditing = new Set<string>()
 
 function callRecords(db: DatabaseSync, callId: string) {
-  const calls = db.prepare("SELECT id, journey_id, status FROM calls WHERE id = ?").all(callId) as Array<{
+  const calls = db
+    .prepare("SELECT id, journey_id, status FROM calls WHERE id = ?")
+    .all(callId) as Array<{
     id: string
     journey_id: string
     status: string
@@ -50,7 +56,9 @@ function callRecords(db: DatabaseSync, callId: string) {
 
 function recordUtterances(db: DatabaseSync, callId: string): Utterance[] {
   const rows = db
-    .prepare("SELECT id, speaker, text, start_ms, end_ms FROM utterances WHERE call_id = ? ORDER BY start_ms, id")
+    .prepare(
+      "SELECT id, speaker, text, start_ms, end_ms FROM utterances WHERE call_id = ? ORDER BY start_ms, id"
+    )
     .all(callId) as Array<Record<string, unknown>>
   return rows.map((r) => ({
     id: String(r.id),
@@ -62,7 +70,7 @@ function recordUtterances(db: DatabaseSync, callId: string): Utterance[] {
 }
 
 /** Facts the auditor cross-checks against the call, mapped from the journey. */
-function factsFromJourney(db: DatabaseSync, journeyId: string) {
+export function factsFromJourney(db: DatabaseSync, journeyId: string) {
   const journey = getJourney(db, journeyId)
   if (!journey) return null
   const fieldValue = (key: string) =>
@@ -79,7 +87,10 @@ function factsFromJourney(db: DatabaseSync, journeyId: string) {
   }
 }
 
-async function buildConversationAudio(callId: string, utterances: Utterance[]): Promise<Buffer | null> {
+async function buildConversationAudio(
+  callId: string,
+  utterances: Utterance[]
+): Promise<Buffer | null> {
   const parts: Buffer[] = []
   for (const utterance of utterances) {
     const savedPath = turnAudioPath(callId, utterance.id)
@@ -122,19 +133,25 @@ export async function runCallAudit(
 
   const facts = factsFromJourney(db, call.journey_id)
   if (!facts) {
-    console.warn(`[call-audit] Journey ${call.journey_id} not found; skipping audit for ${callId}`)
+    console.warn(
+      `[call-audit] Journey ${call.journey_id} not found; skipping audit for ${callId}`
+    )
     return null
   }
 
   const utterances = recordUtterances(db, callId)
   if (utterances.length < 2) {
-    console.warn(`[call-audit] Call ${callId} has too few spoken turns (${utterances.length}); skipping`)
+    console.warn(
+      `[call-audit] Call ${callId} has too few spoken turns (${utterances.length}); skipping`
+    )
     return null
   }
 
   const audio = await buildConversationAudio(callId, utterances)
   if (!audio) {
-    console.warn(`[call-audit] No audio could be assembled for ${callId}; skipping`)
+    console.warn(
+      `[call-audit] No audio could be assembled for ${callId}; skipping`
+    )
     return null
   }
 
@@ -170,7 +187,10 @@ export function queueCallAudit(db: DatabaseSync, callId: string) {
       }
     })
     .catch((error) => {
-      console.error(`[call-audit] Audit failed for ${callId}:`, error instanceof Error ? error.message : error)
+      console.error(
+        `[call-audit] Audit failed for ${callId}:`,
+        error instanceof Error ? error.message : error
+      )
     })
     .finally(() => {
       auditing.delete(callId)

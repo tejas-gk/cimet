@@ -81,15 +81,27 @@ export default function SolarSalesPage() {
     []
   )
 
+  const submitRef = React.useRef<(base64: string | null) => Promise<void>>(
+    async () => {}
+  )
+  submitRef.current = async (base64: string | null) => {
+    if (!base64) return
+    const result = await agent.sendTurn({ audioBase64: base64 })
+    if (result) await playTurns(result.turns)
+  }
+
   const handleVoice = async () => {
     if (recorder.recording) {
       const base64 = await recorder.stop()
-      if (!base64) return
-      const result = await agent.sendTurn({ audioBase64: base64 })
-      if (result) await playTurns(result.turns)
+      await submitRef.current(base64)
       return
     }
-    await recorder.start()
+    await recorder.start({
+      onAutoStop: (base64) => void submitRef.current(base64),
+      silenceMs: 1800,
+      minRecordMs: 800,
+      silenceLevel: 0.08,
+    })
   }
 
   const handleText = async (raw: string) => {
@@ -202,7 +214,8 @@ export default function SolarSalesPage() {
                   </div>
                   <div className="max-w-xs">
                     Press <span className="text-zinc-300">Start call</span> to
-                    hear Priya&apos;s greeting, then use the mic to answer her.
+                    hear Priya&apos;s greeting, then talk — the mic stops
+                    automatically when you pause.
                   </div>
                 </div>
               ) : null}
@@ -232,7 +245,8 @@ export default function SolarSalesPage() {
             <h3 className="font-medium">Live talk</h3>
             <p className="mt-1 text-xs text-zinc-500">
               Your voice is transcribed with Sarvam STT; every reply is
-              synthesised with Sarvam TTS and played back.
+              synthesised with Sarvam TTS and played back. Recording stops
+              automatically after a short pause so the agent can respond.
             </p>
 
             {busy ? (
@@ -274,8 +288,8 @@ export default function SolarSalesPage() {
                       <MicIcon className="size-4" />
                     )}
                     {recorder.recording
-                      ? `Stop · ${Math.round(recorder.durationMs / 1000)}s`
-                      : "Hold to talk"}
+                      ? `Listening · ${Math.round(recorder.durationMs / 1000)}s`
+                      : "Tap to talk"}
                   </Button>
                   <div className="h-2 flex-1 overflow-hidden rounded-full bg-[#222226]">
                     <div
@@ -284,6 +298,12 @@ export default function SolarSalesPage() {
                     />
                   </div>
                 </div>
+
+                {recorder.recording ? (
+                  <div className="text-center text-xs text-zinc-500">
+                    Pause when you&apos;re done — it sends automatically.
+                  </div>
+                ) : null}
 
                 {agent.phase === "connected" ? (
                   <Button
