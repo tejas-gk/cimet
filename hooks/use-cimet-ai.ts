@@ -2,211 +2,213 @@
 
 import * as React from "react"
 
-import { demoAudits, demoCalls, demoJourneys } from "@/lib/cimet-demo-data"
-import type { AuditDecision, AuditRun, CallSession, EnergyJourney, HandoffReason, Utterance } from "@/lib/cimet-ai-types"
+import type {
+  AuditDecision,
+  AuditRun,
+  EnergyJourney,
+  CallSession,
+  HandoffReason,
+} from "@/lib/cimet-ai-types"
 
-const STORAGE_KEY = "cimet-ai-demo-state"
-
-type DemoState = {
-  journeys: EnergyJourney[]
-  calls: CallSession[]
-  audits: AuditRun[]
+export type TurnInput = {
+  text?: string
+  audioBase64?: string
 }
 
-function loadDemoState(): DemoState {
-  if (typeof window === "undefined") {
-    return { journeys: demoJourneys, calls: demoCalls, audits: demoAudits }
+export type VoiceTurnResult = {
+  call: CallSession
+  journey: EnergyJourney
+  audioBase64: string | null
+}
+
+type DashboardMetrics = {
+  total: number
+  autoPass: number
+  hold: number
+  review: number
+  criticalFailures: number
+  agreement: number
+}
+
+type FetchOptions = { method?: string; body?: unknown }
+
+async function api<T>(path: string, options: FetchOptions = {}): Promise<T> {
+  const response = await fetch(path, {
+    method: options.method ?? "GET",
+    headers: options.body ? { "Content-Type": "application/json" } : undefined,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  })
+  const payload = (await response.json().catch(() => null)) as
+    | { data: T; message?: string; error?: { message: string; code: string } }
+    | null
+
+  if (!response.ok) {
+    const message = payload?.error?.message ?? `Request failed (${response.status})`
+    throw new Error(message)
   }
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { journeys: demoJourneys, calls: demoCalls, audits: demoAudits }
-    const parsed = JSON.parse(raw) as Partial<DemoState>
-    return {
-      journeys: parsed.journeys ?? demoJourneys,
-      calls: parsed.calls ?? demoCalls,
-      audits: parsed.audits ?? demoAudits,
-    }
-  } catch {
-    return { journeys: demoJourneys, calls: demoCalls, audits: demoAudits }
-  }
-}
-
-function nextId(prefix: string) {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
-}
-
-function nextMissingField(journey: EnergyJourney) {
-  return journey.fields.find((field) => field.required && !field.value) ?? null
-}
-
-function promptForField(label: string) {
-  return `Thanks. I only need one more detail from where you left off: ${label.toLowerCase()}. What should I put down?`
-}
-
-function createUtterance(speaker: Utterance["speaker"], text: string, index: number): Utterance {
-  const startMs = index * 4500
-  return { id: nextId("utt"), speaker, text, startMs, endMs: startMs + Math.max(1800, text.length * 35) }
+  return (payload?.data ?? null) as T
 }
 
 export function useCimetAi() {
-  const hydratedRef = React.useRef(false)
-  const [journeys, setJourneys] = React.useState<EnergyJourney[]>(demoJourneys)
-  const [calls, setCalls] = React.useState<CallSession[]>(demoCalls)
-  const [audits, setAudits] = React.useState<AuditRun[]>(demoAudits)
+  const mountedRef = React.useRef(false)
+  const [journeys, setJourneys] = React.useState<EnergyJourney[]>([])
+  const [calls, setCalls] = React.useState<CallSession[]>([])
+  const [audits, setAudits] = React.useState<AuditRun[]>([])
+  const [dashboard, setDashboard] = React.useState<DashboardMetrics>({
+    total: 0,
+    autoPass: 0,
+    hold: 0,
+    review: 0,
+    criticalFailures: 0,
+    agreement: 0,
+  })
+  const [loading, setLoading] = React.useState(true)
+  const [refreshing, setRefreshing] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
 
-  React.useEffect(() => {
-    const saved = loadDemoState()
-    setJourneys(saved.journeys)
-    setCalls(saved.calls)
-    setAudits(saved.audits)
-    hydratedRef.current = true
+  const refresh = React.useCallback(async () => {
+    setRefreshing(true)
+    try {
+      const [journeyData, callData, auditData, dashboardData] = await Promise.all([
+        api<EnergyJourney[]>("/api/journeys"),
+        api<Array<CallSession & { journey: EnergyJourney | null }>>("/api/calls"),
+        api<AuditRun[]>("/api/audits"),
+        api<DashboardMetrics>("/api/dashboard"),
+      ])
+      setJourneys(journeyData)
+      setCalls(callData)
+      setAudits(auditData)
+      setDashboard(dashboardData)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load data")
+    } finally {
+      setRefreshing(false)
+      setLoading(false)
+    }
   }, [])
 
   React.useEffect(() => {
-    if (!hydratedRef.current) return
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ journeys, calls, audits }))
-  }, [journeys, calls, audits])
+    if (mountedRef.current) return
+    mountedRef.current = true
+    void refresh()
+  }, [refresh])
 
   const getJourney = React.useCallback(
-    (journeyId: string) => journeys.find((journey) => journey.id === journeyId) ?? null,
+    (journeyId: string) => journeys.find((j) => j.id === journeyId) ?? null,
     [journeys]
   )
 
   const getCall = React.useCallback(
-    (callId: string) => calls.find((call) => call.id === callId) ?? null,
+    (callId: string) => calls.find((c) => c.id === callId) ?? null,
     [calls]
   )
 
   const getAudit = React.useCallback(
-    (auditId: string) => audits.find((audit) => audit.id === auditId) ?? null,
+    (auditId: string) => audits.find((a) => a.id === auditId) ?? null,
     [audits]
   )
 
-  const placeCall = React.useCallback((callId: string) => {
-    setCalls((current) =>
-      current.map((call) => {
-        if (call.id !== callId) return call
-        const first = createUtterance(
-          "ai",
-          "Hi, this is CIMET's virtual energy assistant. You recently started comparing energy plans and did not finish. This call is recorded for quality and compliance. Is it okay if I continue?",
-          call.utterances.length
-        )
-        return { ...call, status: "consent", startedAt: new Date().toISOString(), utterances: [...call.utterances, first] }
+  const startCall = React.useCallback(
+    async (callId: string): Promise<VoiceTurnResult> => {
+      const result = await api<VoiceTurnResult>(`/api/calls/${callId}/start`, {
+        method: "POST",
+        body: {},
       })
-    )
-  }, [])
+      await refresh()
+      return result
+    },
+    [refresh]
+  )
 
-  const recordConsent = React.useCallback((callId: string, accepted: boolean) => {
-    setCalls((current) =>
-      current.map((call) => {
-        if (call.id !== callId) return call
-        const customer = createUtterance("customer", accepted ? "Yes, that is okay." : "No, please do not call me again.", call.utterances.length)
-        if (!accepted) {
-          const close = createUtterance("ai", "No problem. Thank you for your time. I will end the call now.", call.utterances.length + 1)
-          return { ...call, status: "declined", consentRecorded: false, endedAt: new Date().toISOString(), utterances: [...call.utterances, customer, close] }
-        }
-        const journey = journeys.find((item) => item.id === call.journeyId)
-        const field = journey ? nextMissingField(journey) : null
-        const ask = createUtterance("ai", field ? promptForField(field.label) : "Thanks. I have everything needed to submit the journey.", call.utterances.length + 1)
-        return { ...call, status: field ? "collecting" : "completed", consentRecorded: true, currentQuestionKey: field?.key, utterances: [...call.utterances, customer, ask] }
+  const sendTurn = React.useCallback(
+    async (callId: string, input: TurnInput): Promise<VoiceTurnResult> => {
+      const result = await api<VoiceTurnResult>(`/api/calls/${callId}/turn`, {
+        method: "POST",
+        body: input,
       })
-    )
-  }, [journeys])
+      await refresh()
+      return result
+    },
+    [refresh]
+  )
 
-  const answerQuestion = React.useCallback((callId: string, value: string) => {
-    let completedJourneyId: string | null = null
-
-    setCalls((currentCalls) =>
-      currentCalls.map((call) => {
-        if (call.id !== callId || !call.currentQuestionKey) return call
-        const customer = createUtterance("customer", value, call.utterances.length)
-        let nextPrompt: Utterance | null = null
-        let nextQuestionKey: string | undefined
-
-        setJourneys((currentJourneys) =>
-          currentJourneys.map((journey) => {
-            if (journey.id !== call.journeyId) return journey
-            const updatedFields = journey.fields.map((field) =>
-              field.key === call.currentQuestionKey ? { ...field, value, collectedBy: "ai" as const } : field
-            )
-            const updatedJourney = { ...journey, status: "calling" as const, fields: updatedFields }
-            const nextField = nextMissingField(updatedJourney)
-            if (nextField) {
-              nextQuestionKey = nextField.key
-              nextPrompt = createUtterance("ai", promptForField(nextField.label), call.utterances.length + 1)
-            } else {
-              completedJourneyId = journey.id
-              nextPrompt = createUtterance("ai", "That's everything I need. I will submit this energy journey now. Thanks for your time.", call.utterances.length + 1)
-            }
-            return nextField ? updatedJourney : { ...updatedJourney, status: "completed" as const }
-          })
-        )
-
-        return {
-          ...call,
-          status: completedJourneyId === call.journeyId ? "completed" : "collecting",
-          currentQuestionKey: nextQuestionKey,
-          endedAt: completedJourneyId === call.journeyId ? new Date().toISOString() : call.endedAt,
-          utterances: nextPrompt ? [...call.utterances, customer, nextPrompt] : [...call.utterances, customer],
-        }
+  const triggerHandoff = React.useCallback(
+    async (callId: string, reason: HandoffReason) => {
+      await api<CallSession>(`/api/calls/${callId}/handoff`, {
+        method: "POST",
+        body: { reason },
       })
-    )
-  }, [])
+      await refresh()
+    },
+    [refresh]
+  )
 
-  const triggerHandoff = React.useCallback((callId: string, reason: HandoffReason) => {
-    setCalls((current) =>
-      current.map((call) => {
-        if (call.id !== callId) return call
-        const journey = journeys.find((item) => item.id === call.journeyId)
-        const collected = journey?.fields.filter((field) => field.value).map((field) => ({ label: field.label, value: String(field.value) })) ?? []
-        const remaining = journey?.fields.filter((field) => field.required && !field.value).map((field) => field.label) ?? []
-        return {
-          ...call,
-          status: "handoff",
-          safetyScore: Math.min(call.safetyScore, 44),
-          handoff: {
-            reason,
-            collected,
-            remaining,
-            summary: "AI stopped and prepared a warm handoff so the customer does not repeat information already collected.",
-          },
-        }
+  const overrideAudit = React.useCallback(
+    async (auditId: string, decision: AuditDecision, reason: string) => {
+      await api<AuditRun>(`/api/audits/${auditId}/override`, {
+        method: "POST",
+        body: { verdict: decision, note: reason },
       })
-    )
-  }, [journeys])
+      await refresh()
+    },
+    [refresh]
+  )
 
-  const overrideAudit = React.useCallback((auditId: string, decision: AuditDecision, reason: string) => {
-    setAudits((current) =>
-      current.map((audit) =>
-        audit.id === auditId
-          ? { ...audit, status: decision, override: { auditor: "Team Lead", decision, reason } }
-          : audit
-      )
-    )
-  }, [])
+  const uploadAudit = React.useCallback(
+    async (form: FormData): Promise<AuditRun> => {
+      const response = await fetch("/api/audits/upload", {
+        method: "POST",
+        body: form,
+      })
+      const payload = (await response.json().catch(() => null)) as
+        | { data?: AuditRun; error?: { message: string } }
+        | null
+      if (!response.ok) {
+        throw new Error(payload?.error?.message ?? `Upload failed (${response.status})`)
+      }
+      await refresh()
+      return (payload?.data ?? null) as AuditRun
+    },
+    [refresh]
+  )
 
-  const dashboard = React.useMemo(() => {
-    const total = audits.length
-    const autoPass = audits.filter((audit) => audit.status === "auto-pass").length
-    const hold = audits.filter((audit) => audit.status === "hold").length
-    const review = audits.filter((audit) => audit.status === "human-review").length
-    const criticalFailures = audits.flatMap((audit) => audit.checks).filter((check) => check.critical && check.verdict === "fail").length
-    const agreement = Math.round(((total - audits.filter((audit) => audit.override).length) / Math.max(total, 1)) * 100)
-    return { total, autoPass, hold, review, criticalFailures, agreement }
-  }, [audits])
+  const generateDemo = React.useCallback(
+    async (message: (msg: string) => void) => {
+      const response = await fetch("/api/demo/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scenario: "all" }),
+      })
+      const payload = (await response.json().catch(() => null)) as
+        | { message?: string; error?: { message: string } }
+        | null
+      if (!response.ok) {
+        throw new Error(payload?.error?.message ?? `Demo generation failed (${response.status})`)
+      }
+      if (payload?.message) message(payload.message)
+      await refresh()
+    },
+    [refresh]
+  )
 
   return {
     journeys,
     calls,
     audits,
     dashboard,
+    loading,
+    refreshing,
+    error,
+    refresh,
     getJourney,
     getCall,
     getAudit,
-    placeCall,
-    recordConsent,
-    answerQuestion,
+    startCall,
+    sendTurn,
     triggerHandoff,
     overrideAudit,
+    uploadAudit,
+    generateDemo,
   }
 }

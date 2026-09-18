@@ -1,11 +1,13 @@
 "use client"
 
-import { ArrowRightIcon, CheckCircle2Icon, ClipboardCheckIcon, PauseCircleIcon, SearchIcon } from "lucide-react"
+import { ArrowRightIcon, CheckCircle2Icon, ClipboardCheckIcon, Loader2Icon, PauseCircleIcon, SearchIcon, UploadIcon, Wand2Icon } from "lucide-react"
 import Link from "next/link"
+import * as React from "react"
 
 import { CimetAiShell } from "@/components/cimet-ai-shell"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { useCimetAi } from "@/hooks/use-cimet-ai"
 
 function decisionClass(status: string) {
@@ -21,7 +23,50 @@ function decisionIcon(status: string) {
 }
 
 export default function AuditorPage() {
-  const { audits, dashboard } = useCimetAi()
+  const { audits, dashboard, uploadAudit, generateDemo } = useCimetAi()
+  const [busy, setBusy] = React.useState(false)
+  const [notice, setNotice] = React.useState<string | null>(null)
+  const [error, setError] = React.useState<string | null>(null)
+  const [file, setFile] = React.useState<File | null>(null)
+  const [retailer, setRetailer] = React.useState("EnergyAustralia")
+  const [agentName, setAgentName] = React.useState("")
+  const [leadName, setLeadName] = React.useState("")
+  const [customerEmail, setCustomerEmail] = React.useState("")
+
+  const handleUpload = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!file) return
+    setBusy(true)
+    setError(null)
+    setNotice(null)
+    const form = new FormData()
+    form.append("file", file)
+    form.append("retailer", retailer)
+    form.append("agentName", agentName)
+    form.append("leadName", leadName)
+    if (customerEmail.trim()) form.append("customerEmail", customerEmail.trim())
+    try {
+      const audit = await uploadAudit(form)
+      setNotice(`Audit ${audit.id} completed: ${audit.status} (${audit.confidence}% confidence).`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleGenerate = async () => {
+    setBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      await generateDemo((msg) => setNotice(msg))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Demo generation failed")
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <CimetAiShell>
@@ -30,7 +75,7 @@ export default function AuditorPage() {
           <Badge variant="outline" className="w-fit border-violet-500/30 bg-violet-500/10 text-violet-200">Project 2 · AI Quality Auditor</Badge>
           <h2 className="text-2xl font-semibold tracking-tight">Completed-call audits</h2>
           <p className="max-w-3xl text-sm text-zinc-400">
-            Each sale call is transcribed with speakers/timestamps, checked against script, CRM and retailer rules, then routed to auto-pass, hold or human review.
+            Real recordings are transcribed by Sarvam STT, speaker-attributed, then checked against script, CRM and retailer rules by the LLM before routing to auto-pass, hold or human review.
           </p>
         </div>
 
@@ -41,7 +86,62 @@ export default function AuditorPage() {
           <Metric label="Human reviews" value={dashboard.review} />
         </div>
 
+        <div className="grid gap-5 lg:grid-cols-2">
+          <form onSubmit={handleUpload} className="rounded-xl border border-[#27272a] bg-[#0d0d0f] p-4">
+            <h3 className="font-medium">Audit a real recording</h3>
+            <p className="mt-1 text-xs text-zinc-500">Short WAV/MP3 of an actual call (synchronous STT handles under 30s).</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <label className="grid gap-1 text-xs text-zinc-500">
+                Audio file
+                <input
+                  type="file"
+                  accept="audio/*,.wav,.mp3,.m4a,.ogg"
+                  onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                  className="rounded-lg border border-[#27272a] bg-[#111113] p-2 text-xs text-zinc-300 file:mr-2 file:rounded file:border-0 file:bg-white file:text-black"
+                />
+              </label>
+              <label className="grid gap-1 text-xs text-zinc-500">
+                Lead name
+                <Input value={leadName} onChange={(event) => setLeadName(event.target.value)} required className="border-[#27272a] bg-[#111113] text-white" />
+              </label>
+              <label className="grid gap-1 text-xs text-zinc-500">
+                Agent name
+                <Input value={agentName} onChange={(event) => setAgentName(event.target.value)} required className="border-[#27272a] bg-[#111113] text-white" />
+              </label>
+              <label className="grid gap-1 text-xs text-zinc-500">
+                Retailer
+                <select value={retailer} onChange={(event) => setRetailer(event.target.value)} className="rounded-md border border-[#27272a] bg-[#111113] px-3 py-1.5 text-sm text-white">
+                  <option>EnergyAustralia</option>
+                  <option>AGL</option>
+                  <option>Origin</option>
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs text-zinc-500 md:col-span-2">
+                Customer email on file (optional — enables the CRM email check)
+                <Input value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} placeholder="alice@acme.com" className="border-[#27272a] bg-[#111113] text-white" />
+              </label>
+            </div>
+            <Button type="submit" className="mt-3" disabled={busy || !file}>
+              {busy ? <Loader2Icon className="size-4 animate-spin" /> : <UploadIcon className="size-4" />} Run audit pipeline
+            </Button>
+          </form>
+
+          <div className="rounded-xl border border-[#27272a] bg-[#0d0d0f] p-4">
+            <h3 className="font-medium">Generate real test recordings</h3>
+            <p className="mt-1 text-xs text-zinc-500">
+              Composes 3 sales calls with Sarvam TTS (agent + customer voices), then runs the real STT + LLM audit pipeline on each so the QA dashboard has real data. Clearly labelled as generated fixtures.
+            </p>
+            <Button className="mt-3 border-[#34363a] bg-[#111113] text-white" variant="outline" onClick={handleGenerate} disabled={busy}>
+              {busy ? <Loader2Icon className="size-4 animate-spin" /> : <Wand2Icon className="size-4" />} Generate + audit test calls
+            </Button>
+          </div>
+        </div>
+
+        {error ? <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div> : null}
+        {notice ? <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200">{notice}</div> : null}
+
         <div className="overflow-hidden rounded-xl border border-[#27272a] bg-[#0b0b0c]">
+          {audits.length === 0 ? <div className="p-6 text-sm text-zinc-500">No audits yet. Upload a recording or generate the test calls above.</div> : null}
           {audits.map((audit) => {
             const failures = audit.checks.filter((check) => check.verdict === "fail").length
             return (

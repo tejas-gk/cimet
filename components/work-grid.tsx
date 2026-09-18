@@ -488,28 +488,6 @@ export function WorkGrid() {
             </SidebarGroupContent>
           </SidebarGroup>
           <SidebarSeparator />
-          <SidebarGroup>
-            <SidebarGroupLabel>Campaigns</SidebarGroupLabel>
-            <SidebarGroupContent className="space-y-2 px-2 group-data-[collapsible=icon]:hidden">
-              {campaignApi.loading ? <Skeleton className="h-20 bg-[#18181b]" /> : null}
-              {campaignApi.campaigns.map((campaign) => (
-                <Link key={campaign.id} href={`/campaigns?campaign=${campaign.id}`} className="block rounded-md border border-[#242427] bg-[#111113] p-2 text-xs hover:bg-[#18181b]">
-                  <div className="truncate font-medium text-zinc-100">{campaign.name}</div>
-                  <div className="mt-1 text-zinc-500">{campaign.queue.length} queued records</div>
-                </Link>
-              ))}
-              {campaignApi.meta.pages > 1 ? (
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" className="h-8 flex-1 border-[#27272a] bg-[#111113] text-white" disabled={campaignApi.page <= 1} onClick={() => campaignApi.setPage(campaignApi.page - 1)}>
-                    Prev
-                  </Button>
-                  <Button size="sm" variant="outline" className="h-8 flex-1 border-[#27272a] bg-[#111113] text-white" disabled={campaignApi.page >= campaignApi.meta.pages} onClick={() => campaignApi.setPage(campaignApi.page + 1)}>
-                    Next
-                  </Button>
-                </div>
-              ) : null}
-            </SidebarGroupContent>
-          </SidebarGroup>
         </SidebarContent>
         <SidebarFooter className="border-t border-[#27272a] p-3 group-data-[collapsible=icon]:hidden">
           <div className="flex items-center justify-between text-xs text-zinc-400">

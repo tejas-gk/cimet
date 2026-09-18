@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { useCimetAi } from "@/hooks/use-cimet-ai"
 import type { AuditDecision, AuditVerdict } from "@/lib/cimet-ai-types"
-import { formatMs } from "@/lib/cimet-demo-data"
+import { formatMs } from "@/lib/format"
 
 function verdictStyle(verdict: AuditVerdict) {
   if (verdict === "pass") return "border-emerald-500/40 text-emerald-300"
@@ -25,6 +25,8 @@ export default function AuditDetailPage() {
   const audit = getAudit(params.id)
   const [decision, setDecision] = React.useState<AuditDecision>("human-review")
   const [reason, setReason] = React.useState("Reviewed manually and confirmed outcome.")
+  const [busy, setBusy] = React.useState(false)
+  const [notice, setNotice] = React.useState<string | null>(null)
 
   if (!audit) {
     return (
@@ -43,6 +45,9 @@ export default function AuditDetailPage() {
             <h2 className="text-2xl font-semibold">{audit.leadName}</h2>
             <div className="mt-1 text-sm text-zinc-400">{audit.agentName} · {audit.retailer}</div>
             <div className="mt-4 rounded-lg border border-[#242427] bg-[#111113] p-3 text-sm text-zinc-300">{audit.aiSummary}</div>
+            {audit.recordingUrl ? (
+              <audio controls preload="metadata" src={audit.recordingUrl} className="mt-4 w-full" />
+            ) : null}
             <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
               <div className="rounded-lg border border-[#242427] bg-[#111113] p-3"><div className="text-zinc-500">Decision</div><div>{audit.status}</div></div>
               <div className="rounded-lg border border-[#242427] bg-[#111113] p-3"><div className="text-zinc-500">Confidence</div><div>{audit.confidence}%</div></div>
@@ -104,8 +109,25 @@ export default function AuditDetailPage() {
                 </SelectContent>
               </Select>
               <Textarea value={reason} onChange={(event) => setReason(event.target.value)} className="min-h-24 border-[#27272a] bg-[#111113] text-white" />
-              <Button onClick={() => overrideAudit(audit.id, decision, reason)}>Record override</Button>
+              <Button
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true)
+                  setNotice(null)
+                  try {
+                    await overrideAudit(audit.id, decision, reason)
+                    setNotice("Override recorded.")
+                  } catch (err) {
+                    setNotice(err instanceof Error ? err.message : "Override failed")
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+              >
+                Record override
+              </Button>
             </div>
+            {notice ? <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">{notice}</div> : null}
             {audit.override ? <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">Override by {audit.override.auditor}: {audit.override.decision} — {audit.override.reason}</div> : null}
           </div>
         </div>

@@ -1,6 +1,6 @@
 export type ProviderMode = "mock" | "external"
 
-export type VoiceProviderId = "mock" | "vapi" | "twilio-realtime" | "livekit"
+export type VoiceProviderId = "mock" | "sarvam" | "vapi" | "twilio-realtime" | "livekit"
 export type TranscriptionProviderId = "mock" | "deepgram" | "assemblyai" | "whisper-local"
 export type LlmProviderId = "mock" | "openai" | "gemini" | "ollama"
 
@@ -69,6 +69,7 @@ export type CallSession = {
   safetyScore: number
   provider: VoiceProviderId
   currentQuestionKey?: string
+  repeatCount?: number
   startedAt?: string
   endedAt?: string
   utterances: Utterance[]
@@ -104,6 +105,7 @@ export type AuditRun = {
   agentName: string
   retailer: string
   recordingUrl?: string
+  leadId?: string
   status: AuditDecision
   confidence: number
   aiSummary: string
