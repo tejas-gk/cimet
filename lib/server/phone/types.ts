@@ -8,7 +8,7 @@ export type PhoneDialResult = {
   call: CallSession
 }
 
-export type PhoneProviderId = "twilio" | "retell" | "vapi"
+export type PhoneProviderId = "twilio" | "retell" | "vapi" | "plivo" | "exotel"
 
 export type PhoneTurnResult = {
   twiml: string

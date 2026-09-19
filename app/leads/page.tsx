@@ -176,6 +176,26 @@ export default function LeadsPage() {
     async (leadId: string) => {
       try {
         setDialState(null)
+        const lead = getLead(leadId)
+        const leadPayload = lead
+          ? {
+            id: lead.id,
+            name: lead.name ?? "",
+            phone: lead.phone ?? "",
+            email: lead.email ?? "",
+            retailer: lead.retailer ?? "",
+            state: lead.state ?? "",
+            address: lead.address ?? "",
+            postcode: lead.postcode ?? "",
+            dob: lead.dob ?? "",
+            fuelType: lead.fuelType ?? "",
+            nmiMirn: lead.nmiMirn ?? "",
+            concession: lead.concession ?? "",
+            lifeSupport: lead.lifeSupport ?? "",
+            moveInDate: lead.moveInDate ?? "",
+          }
+          : { id: leadId }
+
         const res = await fetch(
           `/api/leads/${encodeURIComponent(leadId)}/phone`,
           {
@@ -183,7 +203,7 @@ export default function LeadsPage() {
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               provider: providerFor(leadId),
-              lead: { id: leadId },
+              lead: leadPayload,
             }),
           }
         )
@@ -199,6 +219,8 @@ export default function LeadsPage() {
         )
         const startData = (await startRes.json().catch(() => null)) as any
         const audio = startData?.data?.audioBase64 ?? null
+        // Save callId into local lead draft for later sync
+        upsertDraft({ id: leadId, callId })
         setPreviewCallId(callId)
         setPreviewInitialAudio(audio)
         setDialState({ leadId, kind: "ok", message: `Placed call ${callId}` })
@@ -350,10 +372,12 @@ export default function LeadsPage() {
 
   async function handleSync(lead: Lead) {
     try {
-      const res = await fetch(
-        `/api/leads/${encodeURIComponent(lead.id)}/sync`,
-        { method: "POST" }
-      )
+      const callId = (lead as any).callId
+      if (!callId) {
+        throw new Error("No call associated with this lead. Place a call first or ensure a callId is set.")
+      }
+      // The server sync endpoint expects a call id in the path (route uses calls table lookup).
+      const res = await fetch(`/api/leads/${encodeURIComponent(callId)}/sync`, { method: "POST" })
       const data = (await res.json().catch(() => null)) as {
         data?: { fields?: Record<string, string> }
       } | null
@@ -388,7 +412,7 @@ export default function LeadsPage() {
     void (async () => {
       autoProcessingRef.current = true
       try {
-        for (;;) {
+        for (; ;) {
           const next = [...leadsRef.current]
             .filter(
               (lead) =>
@@ -480,9 +504,6 @@ export default function LeadsPage() {
       <div className="mx-auto grid w-full min-w-0 gap-4">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <h2 className="text-lg font-semibold tracking-tight">Leads</h2>
-          <p className="text-sm text-zinc-500">
-            Click a name for details. Double-click a cell to edit.
-          </p>
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -518,11 +539,10 @@ export default function LeadsPage() {
             >
               <PhoneIcon className="size-4" /> Auto call
               <span
-                className={`ml-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                  autoCall
-                    ? "bg-emerald-500/20 text-emerald-100"
-                    : "bg-[#222226] text-zinc-500"
-                }`}
+                className={`ml-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${autoCall
+                  ? "bg-emerald-500/20 text-emerald-100"
+                  : "bg-[#222226] text-zinc-500"
+                  }`}
               >
                 {autoCall ? "ON" : "OFF"}
               </span>
@@ -564,11 +584,12 @@ export default function LeadsPage() {
                   <SelectTrigger className="h-6 w-[100px] border-[#34363a] bg-transparent text-xs text-white">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="twilio">Twilio</SelectItem>
-                    <SelectItem value="retell">Retell</SelectItem>
-                    <SelectItem value="vapi">Vapi</SelectItem>
-                  </SelectContent>
+<SelectContent>
+    <SelectItem value="twilio">Twilio</SelectItem>
+    <SelectItem value="retell">Retell</SelectItem>
+    <SelectItem value="vapi">Vapi</SelectItem>
+    <SelectItem value="exotel">Exotel</SelectItem>
+</SelectContent>
                 </Select>
                 <Button
                   size="sm"

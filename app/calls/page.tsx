@@ -39,22 +39,6 @@ export default function CallsPage() {
   return (
     <CimetAiShell>
       <div className="mx-auto grid max-w-7xl gap-5">
-        <div className="grid gap-2">
-          <Badge
-            variant="outline"
-            className="w-fit border-sky-500/30 bg-sky-500/10 text-sky-200"
-          >
-            Project 1 · AI Voice Agent
-          </Badge>
-          <h2 className="text-2xl font-semibold tracking-tight">
-            Dropped energy journeys
-          </h2>
-          <p className="max-w-3xl text-sm text-zinc-400">
-            Real CRM journeys imported from your production environment. The
-            agent uses live Sarvam TTS, STT and LLM for every turn.
-          </p>
-        </div>
-
         <div className="grid gap-3 md:grid-cols-3">
           <div className="rounded-xl border border-[#27272a] bg-[#0d0d0f] p-4">
             <div className="text-2xl font-semibold">{calls.length}</div>
@@ -155,11 +139,12 @@ export default function CallsPage() {
                     <SelectTrigger className="h-9 w-[120px] border-[#34363a] bg-[#111113] text-white">
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="twilio">Twilio</SelectItem>
-                      <SelectItem value="retell">Retell</SelectItem>
-                      <SelectItem value="vapi">Vapi</SelectItem>
-                    </SelectContent>
+<SelectContent>
+    <SelectItem value="twilio">Twilio</SelectItem>
+    <SelectItem value="retell">Retell</SelectItem>
+    <SelectItem value="vapi">Vapi</SelectItem>
+    <SelectItem value="exotel">Exotel</SelectItem>
+</SelectContent>
                   </Select>
                   <Button
                     size="sm"

@@ -9,39 +9,141 @@ import {
   updateCall,
   updateJourneyFieldValue,
 } from "@/lib/server/db"
+
 import { runAudit } from "@/lib/server/auditor"
 import { factsFromJourney } from "@/lib/server/call-audit"
+
 import { savePhoneTtsAudio } from "@/lib/server/phone/audio"
-import { gather, play, response, say } from "@/lib/server/phone/twiml"
+
 import {
+  gather,
+  play,
+  response,
+  say,
+} from "@/lib/server/phone/twiml"
+
+import {
+  buildGreeting,
   processSolarTurn,
-  SOLAR_GREETING,
   synthesizeGreeting,
 } from "@/lib/server/solar-agent"
-import type { SolarConversationLine } from "@/lib/server/solar-agent"
+
+import type {
+  LeadContext,
+  SolarConversationLine,
+} from "@/lib/server/solar-agent"
+
 import type {
   PhoneDialResult,
   PhoneProvider,
   PhoneTurnResult,
 } from "@/lib/server/phone/types"
-import type { Speaker, Utterance } from "@/lib/cimet-ai-types"
+
+import type {
+  Speaker,
+  Utterance,
+} from "@/lib/cimet-ai-types"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Environment
+// ─────────────────────────────────────────────────────────────────────────────
 
 function requiredEnv(key: string) {
-  const value = process.env[key]?.trim()
-  if (!value) throw new Error(`${key} is not configured`)
+  const value =
+    process.env[key]?.trim()
+
+  if (!value) {
+    throw new Error(
+      `${key} is not configured`
+    )
+  }
+
   return value
 }
 
 function publicBaseUrl() {
-  return requiredEnv("APP_PUBLIC_BASE_URL").replace(/\/$/, "")
+  return requiredEnv(
+    "APP_PUBLIC_BASE_URL"
+  ).replace(/\/$/, "")
 }
 
-function callById(db: DatabaseSync, callId: string) {
-  return listCalls(db).find((call) => call.id === callId) ?? null
+function absoluteUrl(path: string) {
+  return `${publicBaseUrl()}${path}`
 }
 
-function nextStartMs(utterances: Utterance[]) {
-  return utterances.length ? utterances[utterances.length - 1].endMs + 500 : 0
+// ─────────────────────────────────────────────────────────────────────────────
+// Database helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function callById(
+  db: DatabaseSync,
+  callId: string
+) {
+  return (
+    listCalls(db).find(
+      (call) => call.id === callId
+    ) ?? null
+  )
+}
+
+/**
+ * Convert persisted journey fields into the format
+ * expected by the recovery agent.
+ *
+ * This is CRITICAL.
+ *
+ * Every turn must use the latest journey state so the AI
+ * never asks for something that has already been collected.
+ */
+function leadContextFromJourney(
+  journey:
+    | ReturnType<typeof getJourney>
+    | null
+): LeadContext {
+  if (!journey) {
+    return {}
+  }
+
+  const context: LeadContext = {}
+
+  for (const field of journey.fields) {
+    if (
+      typeof field.value !== "string"
+    ) {
+      continue
+    }
+
+    const value =
+      field.value.trim()
+
+    if (!value) {
+      continue
+    }
+
+    context[
+      field.key as keyof LeadContext
+    ] = value
+  }
+
+  return context
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utterance helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function nextStartMs(
+  utterances: Utterance[]
+) {
+  if (!utterances.length) {
+    return 0
+  }
+
+  return (
+    utterances[
+      utterances.length - 1
+    ].endMs + 500
+  )
 }
 
 function savePhoneUtterance(
@@ -53,102 +155,304 @@ function savePhoneUtterance(
 ) {
   createUtterance(db, {
     id: crypto.randomUUID(),
+
     callId,
+
     speaker,
+
     text,
+
     startMs,
-    endMs: startMs + Math.max(1800, text.length * 45),
+
+    endMs:
+      startMs +
+      Math.max(
+        1800,
+        text.length * 45
+      ),
   })
 }
 
-function solarHistory(utterances: Utterance[]) {
-  const history: SolarConversationLine[] = []
+function solarHistory(
+  utterances: Utterance[]
+): SolarConversationLine[] {
+  const history:
+    SolarConversationLine[] = []
+
   for (const utterance of utterances) {
-    if (utterance.speaker === "customer") {
-      history.push({ speaker: "user", text: utterance.text })
-    } else if (utterance.speaker === "ai") {
-      history.push({ speaker: "ai", text: utterance.text })
-    } else if (utterance.speaker === "human-agent") {
-      history.push({ speaker: "human-agent", text: utterance.text })
+    if (
+      utterance.speaker ===
+      "customer"
+    ) {
+      history.push({
+        speaker: "user",
+        text: utterance.text,
+      })
+
+      continue
+    }
+
+    if (
+      utterance.speaker === "ai"
+    ) {
+      history.push({
+        speaker: "ai",
+        text: utterance.text,
+      })
+
+      continue
+    }
+
+    if (
+      utterance.speaker ===
+      "human-agent"
+    ) {
+      history.push({
+        speaker: "human-agent",
+        text: utterance.text,
+      })
     }
   }
-  return history.slice(-20)
+
+  /**
+   * Enough recent context for natural conversation
+   * without sending the entire call every time.
+   */
+  return history.slice(-30)
 }
 
-function isHumanAgentActive(utterances: Utterance[]) {
-  return utterances.some((utterance) => utterance.speaker === "human-agent")
+function isHumanAgentActive(
+  utterances: Utterance[]
+) {
+  return utterances.some(
+    (utterance) =>
+      utterance.speaker ===
+      "human-agent"
+  )
 }
 
-function absoluteUrl(path: string) {
-  return `${publicBaseUrl()}${path}`
+// ─────────────────────────────────────────────────────────────────────────────
+// Twilio URLs
+// ─────────────────────────────────────────────────────────────────────────────
+
+function speechAction(
+  callId: string
+) {
+  return absoluteUrl(
+    `/api/phone/twilio/${encodeURIComponent(
+      callId
+    )}/turn`
+  )
 }
 
-function speechAction(callId: string) {
-  return absoluteUrl(`/api/phone/twilio/${encodeURIComponent(callId)}/turn`)
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// TTS / TwiML helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Save Sarvam-generated WAV audio and return Twilio <Play>.
+ *
+ * If Sarvam TTS failed, fall back to Twilio <Say> so the
+ * conversation does not completely die.
+ */
 function audioTag(
   callId: string,
-  audioBase64: string | null | undefined,
+  audioBase64:
+    | string
+    | null
+    | undefined,
   fallbackText: string
 ) {
-  const filename = savePhoneTtsAudio(callId, audioBase64)
-  if (!filename) return say(fallbackText)
-  return play(absoluteUrl(`/api/phone/tts/${encodeURIComponent(filename)}`))
+  const filename =
+    savePhoneTtsAudio(
+      callId,
+      audioBase64
+    )
+
+  if (!filename) {
+    console.warn(
+      "[twilio] No Sarvam audio available. Falling back to Twilio Say."
+    )
+
+    return say(fallbackText)
+  }
+
+  const audioUrl =
+    absoluteUrl(
+      `/api/phone/tts/${encodeURIComponent(
+        filename
+      )}`
+    )
+
+  console.log(
+    "[twilio] Playing TTS:",
+    audioUrl
+  )
+
+  return play(audioUrl)
 }
 
+/**
+ * Play one AI response and listen for customer speech.
+ */
 function continueConversation(
   callId: string,
-  audioBase64: string | null | undefined,
+  audioBase64:
+    | string
+    | null
+    | undefined,
   fallbackText: string
 ) {
   return response(
-    gather(speechAction(callId), audioTag(callId, audioBase64, fallbackText))
+    gather(
+      speechAction(callId),
+
+      audioTag(
+        callId,
+        audioBase64,
+        fallbackText
+      )
+    )
   )
 }
 
+/**
+ * Used when a result contains multiple turns,
+ * e.g. AI announces handoff and then human speaks.
+ */
 function continueConversationTurns(
   callId: string,
-  turns: Array<{ audioBase64: string | null; text: string }>
+  turns: Array<{
+    audioBase64:
+    | string
+    | null
+
+    text: string
+  }>
 ) {
-  const children = turns
-    .map((turn) => audioTag(callId, turn.audioBase64, turn.text))
-    .join("")
-  return response(gather(speechAction(callId), children))
+  const children =
+    turns
+      .map((turn) =>
+        audioTag(
+          callId,
+          turn.audioBase64,
+          turn.text
+        )
+      )
+      .join("")
+
+  return response(
+    gather(
+      speechAction(callId),
+      children
+    )
+  )
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Twilio authentication
+// ─────────────────────────────────────────────────────────────────────────────
 
 function twilioAuthHeader() {
-  return `Basic ${Buffer.from(`${requiredEnv("TWILIO_ACCOUNT_SID")}:${requiredEnv("TWILIO_AUTH_TOKEN")}`).toString("base64")}`
+  const accountSid =
+    requiredEnv(
+      "TWILIO_ACCOUNT_SID"
+    )
+
+  const authToken =
+    requiredEnv(
+      "TWILIO_AUTH_TOKEN"
+    )
+
+  const credentials =
+    Buffer.from(
+      `${accountSid}:${authToken}`
+    ).toString("base64")
+
+  return `Basic ${credentials}`
 }
 
-async function twilioPost<T>(path: string, body: URLSearchParams): Promise<T> {
-  const sid = requiredEnv("TWILIO_ACCOUNT_SID")
-  const res = await fetch(
-    `https://api.twilio.com/2010-04-01/Accounts/${sid}${path}`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: twilioAuthHeader(),
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body,
-    }
+// ─────────────────────────────────────────────────────────────────────────────
+// Twilio REST API
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function twilioPost<T>(
+  path: string,
+  body: URLSearchParams
+): Promise<T> {
+  const sid =
+    requiredEnv(
+      "TWILIO_ACCOUNT_SID"
+    )
+
+  const url =
+    `https://api.twilio.com/2010-04-01/Accounts/${sid}${path}`
+
+  console.log(
+    "[twilio] POST",
+    url
   )
-  const text = await res.text()
-  if (!res.ok) throw new Error(`Twilio request failed (${res.status}): ${text}`)
+
+  const res = await fetch(url, {
+    method: "POST",
+
+    headers: {
+      Authorization:
+        twilioAuthHeader(),
+
+      "Content-Type":
+        "application/x-www-form-urlencoded",
+    },
+
+    body,
+  })
+
+  const text =
+    await res.text()
+
+  if (!res.ok) {
+    console.error(
+      "[twilio] API ERROR",
+      res.status,
+      text
+    )
+
+    throw new Error(
+      `Twilio request failed (${res.status}): ${text}`
+    )
+  }
+
   return JSON.parse(text) as T
 }
 
-async function fetchTwilioRecording(recordingUrl: string) {
-  const url = recordingUrl.endsWith(".wav")
-    ? recordingUrl
-    : `${recordingUrl}.wav`
+// ─────────────────────────────────────────────────────────────────────────────
+// Twilio recording
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function fetchTwilioRecording(
+  recordingUrl: string
+) {
+  const url =
+    recordingUrl.endsWith(".wav")
+      ? recordingUrl
+      : `${recordingUrl}.wav`
+
   const res = await fetch(url, {
-    headers: { Authorization: twilioAuthHeader() },
+    headers: {
+      Authorization:
+        twilioAuthHeader(),
+    },
   })
-  if (!res.ok)
-    throw new Error(`Failed to download Twilio recording (${res.status})`)
-  return Buffer.from(await res.arrayBuffer())
+
+  if (!res.ok) {
+    throw new Error(
+      `Failed to download Twilio recording (${res.status})`
+    )
+  }
+
+  return Buffer.from(
+    await res.arrayBuffer()
+  )
 }
 
 async function auditRecording(
@@ -157,179 +461,901 @@ async function auditRecording(
   recordingUrl: string
 ) {
   const existing =
-    listAudits(db).find((audit) => audit.leadId === callId) ?? null
-  if (existing) return existing
-  const call = callById(db, callId)
-  if (!call) throw new Error("Call not found")
-  const facts = factsFromJourney(db, call.journeyId)
-  if (!facts) throw new Error("Journey not found")
-  const audio = await fetchTwilioRecording(recordingUrl)
-  const { audit } = await runAudit({
-    audio,
-    source: "voice-call",
-    persistAudio: true,
-    leadId: callId,
-    attributes: facts,
-  })
-  return audit
-}
+    listAudits(db).find(
+      (audit) =>
+        audit.leadId === callId
+    ) ?? null
 
-export const twilioPhoneProvider: PhoneProvider = {
-  id: "twilio",
+  if (existing) {
+    return existing
+  }
 
-  async dial(db, callId): Promise<PhoneDialResult> {
-    const call = callById(db, callId)
-    if (!call) throw new Error("Call not found")
-    const journey = (await import("@/lib/server/db")).getJourney(
+  const call =
+    callById(db, callId)
+
+  if (!call) {
+    throw new Error(
+      "Call not found"
+    )
+  }
+
+  const facts =
+    factsFromJourney(
       db,
       call.journeyId
     )
-    if (!journey) throw new Error("Journey not found")
-    if (journey.doNotCall) throw new Error("Journey is marked do-not-call")
 
-    type TwilioCall = { sid: string }
-    const result = await twilioPost<TwilioCall>(
-      "/Calls.json",
-      new URLSearchParams({
-        To: journey.phone,
-        From: requiredEnv("TWILIO_FROM_NUMBER"),
-        Url: absoluteUrl(
-          `/api/phone/twilio/${encodeURIComponent(callId)}/twiml`
-        ),
-        Method: "POST",
-        StatusCallback: absoluteUrl(
-          `/api/phone/twilio/${encodeURIComponent(callId)}/status`
-        ),
-        StatusCallbackMethod: "POST",
-        StatusCallbackEvent: "initiated ringing answered completed",
-        Record: "true",
-        RecordingStatusCallback: absoluteUrl(
-          `/api/phone/twilio/${encodeURIComponent(callId)}/recording`
-        ),
-        RecordingStatusCallbackMethod: "POST",
-      })
+  if (!facts) {
+    throw new Error(
+      "Journey not found"
+    )
+  }
+
+  const audio =
+    await fetchTwilioRecording(
+      recordingUrl
     )
 
-    updateCall(db, callId, { status: "ringing" })
+  const { audit } =
+    await runAudit({
+      audio,
+
+      source:
+        "voice-call",
+
+      persistAudio: true,
+
+      leadId: callId,
+
+      attributes: facts,
+    })
+
+  return audit
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Provider
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const twilioPhoneProvider:
+  PhoneProvider = {
+  id: "twilio",
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // DIAL
+  // ─────────────────────────────────────────────────────────────────────────
+
+  async dial(
+    db,
+    callId
+  ): Promise<PhoneDialResult> {
+    const call =
+      callById(
+        db,
+        callId
+      )
+
+    if (!call) {
+      throw new Error(
+        "Call not found"
+      )
+    }
+
+    const journey =
+      getJourney(
+        db,
+        call.journeyId
+      )
+
+    if (!journey) {
+      throw new Error(
+        "Journey not found"
+      )
+    }
+
+    if (journey.doNotCall) {
+      throw new Error(
+        "Journey is marked do-not-call"
+      )
+    }
+
+    if (
+      !journey.phone?.trim()
+    ) {
+      throw new Error(
+        "Journey does not have a phone number"
+      )
+    }
+
+    const twimlUrl =
+      absoluteUrl(
+        `/api/phone/twilio/${encodeURIComponent(
+          callId
+        )}/twiml`
+      )
+
+    const statusUrl =
+      absoluteUrl(
+        `/api/phone/twilio/${encodeURIComponent(
+          callId
+        )}/status`
+      )
+
+    const recordingUrl =
+      absoluteUrl(
+        `/api/phone/twilio/${encodeURIComponent(
+          callId
+        )}/recording`
+      )
+
+    console.log(
+      "[twilio] Dialing:",
+      {
+        callId,
+
+        journeyId:
+          call.journeyId,
+
+        to:
+          journey.phone,
+
+        from:
+          requiredEnv(
+            "TWILIO_FROM_NUMBER"
+          ),
+
+        twimlUrl,
+
+        statusUrl,
+
+        recordingUrl,
+      }
+    )
+
+    type TwilioCall = {
+      sid: string
+      status?: string
+    }
+
+    const result =
+      await twilioPost<TwilioCall>(
+        "/Calls.json",
+
+        new URLSearchParams({
+          To:
+            journey.phone,
+
+          From:
+            requiredEnv(
+              "TWILIO_FROM_NUMBER"
+            ),
+
+          Url:
+            twimlUrl,
+
+          Method:
+            "POST",
+
+          StatusCallback:
+            statusUrl,
+
+          StatusCallbackMethod:
+            "POST",
+
+          StatusCallbackEvent:
+            "initiated ringing answered completed",
+
+          Record:
+            "true",
+
+          RecordingStatusCallback:
+            recordingUrl,
+
+          RecordingStatusCallbackMethod:
+            "POST",
+        })
+      )
+
+    console.log(
+      "[twilio] Call created:",
+      {
+        sid: result.sid,
+        status: result.status,
+      }
+    )
+
+    updateCall(
+      db,
+      callId,
+      {
+        status: "ringing",
+      }
+    )
+
     return {
       provider: this.id,
-      providerCallId: result.sid,
-      call: callById(db, callId)!,
+
+      providerCallId:
+        result.sid,
+
+      call:
+        callById(
+          db,
+          callId
+        )!,
     }
   },
 
-  async initialTwiml(db, callId): Promise<string> {
-    const call = callById(db, callId)
-    if (!call) throw new Error("Call not found")
+  // ─────────────────────────────────────────────────────────────────────────
+  // INITIAL ANSWER / GREETING
+  // ─────────────────────────────────────────────────────────────────────────
 
-    if (call.utterances.length === 0) {
-      db.exec("BEGIN TRANSACTION")
+  async initialTwiml(
+    db,
+    callId
+  ): Promise<string> {
+    console.log(
+      "[twilio] initialTwiml:",
+      callId
+    )
+
+    const call =
+      callById(
+        db,
+        callId
+      )
+
+    if (!call) {
+      throw new Error(
+        "Call not found"
+      )
+    }
+
+    /**
+     * IMPORTANT:
+     * Load existing journey data BEFORE creating the greeting.
+     */
+    const journey =
+      getJourney(
+        db,
+        call.journeyId
+      )
+
+    if (!journey) {
+      throw new Error(
+        "Journey not found"
+      )
+    }
+
+    const leadContext =
+      leadContextFromJourney(
+        journey
+      )
+
+    console.log(
+      "[twilio] Initial lead context:",
+      leadContext
+    )
+
+    /**
+     * The exact text stored in history must match the
+     * greeting we're synthesizing.
+     */
+    const greetingText =
+      buildGreeting(
+        leadContext
+      )
+
+    /**
+     * Only store the greeting once.
+     *
+     * Twilio can retry webhooks, so don't duplicate it.
+     */
+    if (
+      call.utterances.length === 0
+    ) {
+      db.exec(
+        "BEGIN TRANSACTION"
+      )
+
       try {
-        savePhoneUtterance(db, callId, "ai", SOLAR_GREETING, 0)
-        updateCall(db, callId, {
-          status: "collecting",
-          startedAt: new Date().toISOString(),
-        })
-        db.exec("COMMIT")
+        savePhoneUtterance(
+          db,
+          callId,
+          "ai",
+          greetingText,
+          0
+        )
+
+        updateCall(
+          db,
+          callId,
+          {
+            status:
+              "collecting",
+
+            startedAt:
+              new Date().toISOString(),
+          }
+        )
+
+        db.exec(
+          "COMMIT"
+        )
       } catch (error) {
-        db.exec("ROLLBACK")
+        db.exec(
+          "ROLLBACK"
+        )
+
         throw error
       }
     }
 
-    const audioBase64 = await synthesizeGreeting()
-    return continueConversation(callId, audioBase64, SOLAR_GREETING)
+    /**
+     * Sarvam generates the actual Priya voice.
+     *
+     * IMPORTANT:
+     * Pass leadContext so known information can be used
+     * in the greeting.
+     */
+    const audioBase64 =
+      await synthesizeGreeting(
+        leadContext
+      )
+
+    console.log(
+      "[twilio] Greeting synthesized:",
+      {
+        callId,
+
+        hasAudio:
+          Boolean(
+            audioBase64
+          ),
+
+        greeting:
+          greetingText,
+      }
+    )
+
+    return continueConversation(
+      callId,
+      audioBase64,
+      greetingText
+    )
   },
 
-  async turnTwiml(db, callId, speech): Promise<PhoneTurnResult> {
-    const text = speech.trim()
+  // ─────────────────────────────────────────────────────────────────────────
+  // CUSTOMER TURN
+  // ─────────────────────────────────────────────────────────────────────────
+
+  async turnTwiml(
+    db,
+    callId,
+    speech
+  ): Promise<PhoneTurnResult> {
+    const text =
+      speech.trim()
+
+    console.log(
+      "[twilio] Customer speech:",
+      {
+        callId,
+        text,
+      }
+    )
+
+    // ───────────────────────────────────────────────────────────────────────
+    // Empty recognition
+    // ───────────────────────────────────────────────────────────────────────
+
     if (!text) {
+      const fallback =
+        "Sorry, I didn't quite catch that. Could you say that again for me?"
+
       return {
-        twiml: continueConversation(
-          callId,
-          null,
-          "Sorry, I didn't catch that. Could you say it again?"
-        ),
+        twiml:
+          continueConversation(
+            callId,
+            null,
+            fallback
+          ),
+
         audit: null,
       }
     }
 
-    const call = callById(db, callId)
-    if (!call) throw new Error("Call not found")
+    // ───────────────────────────────────────────────────────────────────────
+    // Load call
+    // ───────────────────────────────────────────────────────────────────────
 
-    const journey = getJourney(db, call.journeyId)
-    const leadContext = journey
-      ? Object.fromEntries(
-          journey.fields
-            .filter((field) => field.value)
-            .map((field) => [field.key, field.value])
-        )
-      : {}
+    const call =
+      callById(
+        db,
+        callId
+      )
 
-    const result = await processSolarTurn({
-      text,
-      history: solarHistory(call.utterances),
-      humanAgent: !!call.handoff || isHumanAgentActive(call.utterances),
-      leadContext,
-    })
+    if (!call) {
+      throw new Error(
+        "Call not found"
+      )
+    }
 
-    db.exec("BEGIN TRANSACTION")
+    // ───────────────────────────────────────────────────────────────────────
+    // CRITICAL: Reload journey on EVERY turn
+    // ───────────────────────────────────────────────────────────────────────
+
+    const journey =
+      getJourney(
+        db,
+        call.journeyId
+      )
+
+    if (!journey) {
+      throw new Error(
+        "Journey not found"
+      )
+    }
+
+    const leadContext =
+      leadContextFromJourney(
+        journey
+      )
+
+    console.log(
+      "[twilio] Journey before AI turn:",
+      {
+        callId,
+
+        journeyId:
+          call.journeyId,
+
+        leadContext,
+      }
+    )
+
+    // ───────────────────────────────────────────────────────────────────────
+    // Run recovery/sales agent
+    // ───────────────────────────────────────────────────────────────────────
+
+    const result =
+      await processSolarTurn({
+        text,
+
+        history:
+          solarHistory(
+            call.utterances
+          ),
+
+        humanAgent:
+          Boolean(
+            call.handoff
+          ) ||
+          isHumanAgentActive(
+            call.utterances
+          ),
+
+        leadContext,
+      })
+
+    console.log(
+      "[twilio] AI result:",
+      {
+        transcript:
+          result.transcript,
+
+        currentField:
+          result.currentField,
+
+        nextMissingField:
+          result.nextMissingField,
+
+        missingFields:
+          result.missingFields,
+
+        newlyExtractedData:
+          result.newlyExtractedData,
+
+        journeyComplete:
+          result.journeyComplete,
+
+        optedOut:
+          result.optedOut,
+
+        handoff:
+          result.handoff,
+      }
+    )
+
+    // ───────────────────────────────────────────────────────────────────────
+    // Persist conversation + extracted fields
+    // ───────────────────────────────────────────────────────────────────────
+
+    db.exec(
+      "BEGIN TRANSACTION"
+    )
+
     try {
-      let startMs = nextStartMs(call.utterances)
-      savePhoneUtterance(db, callId, "customer", result.transcript, startMs)
-      startMs += Math.max(1800, result.transcript.length * 45) + 500
+      let startMs =
+        nextStartMs(
+          call.utterances
+        )
 
-      for (const turn of result.turns) {
-        savePhoneUtterance(db, callId, turn.speaker, turn.text, startMs)
-        startMs += Math.max(1800, turn.text.length * 45) + 500
+      /**
+       * Store customer utterance.
+       */
+      savePhoneUtterance(
+        db,
+        callId,
+        "customer",
+        result.transcript,
+        startMs
+      )
+
+      startMs +=
+        Math.max(
+          1800,
+          result.transcript.length *
+          45
+        ) + 500
+
+      /**
+       * Store AI/human responses.
+       */
+      for (
+        const turn of
+        result.turns
+      ) {
+        savePhoneUtterance(
+          db,
+          callId,
+          turn.speaker,
+          turn.text,
+          startMs
+        )
+
+        startMs +=
+          Math.max(
+            1800,
+            turn.text.length *
+            45
+          ) + 500
       }
 
-      if (result.extractedData) {
-        for (const [key, value] of Object.entries(result.extractedData)) {
-          if (value && value.trim().length > 0) {
-            updateJourneyFieldValue(db, call.journeyId, key, value, "ai")
+      /**
+       * IMPORTANT:
+       *
+       * Persist ONLY fields collected/corrected during
+       * this turn.
+       *
+       * Do NOT rewrite the entire leadContext every turn.
+       */
+      if (
+        result.newlyExtractedData
+      ) {
+        for (
+          const [
+            key,
+            rawValue,
+          ] of Object.entries(
+            result.newlyExtractedData
+          )
+        ) {
+          if (
+            typeof rawValue !==
+            "string"
+          ) {
+            continue
           }
+
+          const value =
+            rawValue.trim()
+
+          if (!value) {
+            continue
+          }
+
+          console.log(
+            "[twilio] Persisting field:",
+            {
+              key,
+              value,
+            }
+          )
+
+          updateJourneyFieldValue(
+            db,
+            call.journeyId,
+            key,
+            value,
+            "ai"
+          )
         }
       }
 
-      if (result.handoff && !call.handoff) {
-        createHandoff(db, {
+      // ─────────────────────────────────────────────────────────────────────
+      // Handoff
+      // ─────────────────────────────────────────────────────────────────────
+
+      if (
+        result.handoff &&
+        !call.handoff
+      ) {
+        createHandoff(
+          db,
+          {
+            callId,
+
+            reason:
+              result.handoff.reason,
+
+            summary:
+              result.handoff.summary,
+
+            collected:
+              result.handoff
+                .collected ??
+              [],
+
+            remaining:
+              result.missingFields ??
+              [],
+          }
+        )
+
+        updateCall(
+          db,
           callId,
-          reason: result.handoff.reason,
-          summary: result.handoff.summary,
-          collected: result.handoff.collected ?? [],
-          remaining: [],
-        })
-        updateCall(db, callId, { status: "handoff" })
-      } else if (call.status !== "handoff") {
-        updateCall(db, callId, { status: "collecting" })
+          {
+            status:
+              "handoff",
+          }
+        )
       }
 
-      db.exec("COMMIT")
+      // ─────────────────────────────────────────────────────────────────────
+      // Opt-out
+      // ─────────────────────────────────────────────────────────────────────
+
+      else if (
+        result.optedOut
+      ) {
+        updateCall(
+          db,
+          callId,
+          {
+            status:
+              "declined",
+
+            endedAt:
+              new Date().toISOString(),
+          }
+        )
+      }
+
+      // ─────────────────────────────────────────────────────────────────────
+      // Journey completed
+      // ─────────────────────────────────────────────────────────────────────
+
+      else if (
+        result.journeyComplete
+      ) {
+        updateCall(
+          db,
+          callId,
+          {
+            status:
+              "completed",
+          }
+        )
+      }
+
+      // ─────────────────────────────────────────────────────────────────────
+      // Still collecting
+      // ─────────────────────────────────────────────────────────────────────
+
+      else if (
+        call.status !==
+        "handoff"
+      ) {
+        updateCall(
+          db,
+          callId,
+          {
+            status:
+              "collecting",
+          }
+        )
+      }
+
+      db.exec(
+        "COMMIT"
+      )
     } catch (error) {
-      db.exec("ROLLBACK")
+      db.exec(
+        "ROLLBACK"
+      )
+
+      console.error(
+        "[twilio] Failed to persist turn:",
+        error
+      )
+
       throw error
     }
 
+    // ───────────────────────────────────────────────────────────────────────
+    // Return TwiML
+    // ───────────────────────────────────────────────────────────────────────
+
     return {
-      twiml: continueConversationTurns(callId, result.turns),
+      twiml:
+        continueConversationTurns(
+          callId,
+          result.turns
+        ),
+
       audit: null,
     }
   },
 
-  async status(db, callId, form): Promise<void> {
-    const status = String(form.get("CallStatus") ?? "")
-    if (["busy", "failed", "no-answer", "canceled"].includes(status)) {
-      updateCall(db, callId, {
-        status: "declined",
-        endedAt: new Date().toISOString(),
-      })
+  // ─────────────────────────────────────────────────────────────────────────
+  // TWILIO STATUS CALLBACK
+  // ─────────────────────────────────────────────────────────────────────────
+
+  async status(
+    db,
+    callId,
+    form
+  ): Promise<void> {
+    const status =
+      String(
+        form.get(
+          "CallStatus"
+        ) ?? ""
+      )
+
+    const providerCallId =
+      String(
+        form.get(
+          "CallSid"
+        ) ?? ""
+      )
+
+    console.log(
+      "[twilio] Status callback:",
+      {
+        callId,
+        providerCallId,
+        status,
+      }
+    )
+
+    if (
+      status ===
+      "in-progress"
+    ) {
+      const call =
+        callById(
+          db,
+          callId
+        )
+
+      if (
+        call &&
+        !call.startedAt
+      ) {
+        updateCall(
+          db,
+          callId,
+          {
+            status:
+              "collecting",
+
+            startedAt:
+              new Date().toISOString(),
+          }
+        )
+      }
+
+      return
+    }
+
+    if (
+      [
+        "busy",
+        "failed",
+        "no-answer",
+        "canceled",
+      ].includes(status)
+    ) {
+      updateCall(
+        db,
+        callId,
+        {
+          status:
+            "declined",
+
+          endedAt:
+            new Date().toISOString(),
+        }
+      )
+
+      return
+    }
+
+    if (
+      status ===
+      "completed"
+    ) {
+      const call =
+        callById(
+          db,
+          callId
+        )
+
+      /**
+       * Don't destroy a useful final state such as
+       * handoff/completed/declined.
+       *
+       * Just ensure endedAt exists.
+       */
+      if (call) {
+        updateCall(
+          db,
+          callId,
+          {
+            endedAt:
+              new Date().toISOString(),
+          }
+        )
+      }
     }
   },
 
-  async recording(db, callId, form) {
-    const recordingUrl = String(form.get("RecordingUrl") ?? "")
-    if (!recordingUrl) return null
-    return auditRecording(db, callId, recordingUrl)
+  // ─────────────────────────────────────────────────────────────────────────
+  // RECORDING CALLBACK
+  // ─────────────────────────────────────────────────────────────────────────
+
+  async recording(
+    db,
+    callId,
+    form
+  ) {
+    const recordingUrl =
+      String(
+        form.get(
+          "RecordingUrl"
+        ) ?? ""
+      )
+
+    const recordingStatus =
+      String(
+        form.get(
+          "RecordingStatus"
+        ) ?? ""
+      )
+
+    console.log(
+      "[twilio] Recording callback:",
+      {
+        callId,
+        recordingStatus,
+        hasRecordingUrl:
+          Boolean(
+            recordingUrl
+          ),
+      }
+    )
+
+    if (!recordingUrl) {
+      return null
+    }
+
+    return auditRecording(
+      db,
+      callId,
+      recordingUrl
+    )
   },
 }

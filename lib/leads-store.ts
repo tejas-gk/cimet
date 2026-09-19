@@ -42,6 +42,7 @@ export type Lead = {
   qaAuditId: string | null
   qaSummary: string | null
   qaConfidence: number | null
+  callId: string | null
 }
 
 export const STORAGE_KEY = "cimet-leads-v3"
@@ -114,6 +115,7 @@ export function emptyLead(): Lead {
     qaAuditId: null,
     qaSummary: null,
     qaConfidence: null,
+    callId: null,
   }
 }
 

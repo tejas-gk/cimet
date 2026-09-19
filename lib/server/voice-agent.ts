@@ -172,8 +172,7 @@ function buildUserPrompt(params: {
   const fields = params.journey.fields
     .map(
       (f) =>
-        `- ${f.label} (key=${f.key}, ${f.required ? "required" : "optional"}, value: ${
-          f.value ? JSON.stringify(f.value) : "missing"
+        `- ${f.label} (key=${f.key}, ${f.required ? "required" : "optional"}, value: ${f.value ? JSON.stringify(f.value) : "missing"
         })`
     )
     .join("\n")
@@ -354,13 +353,26 @@ export async function processTurn(params: {
   const { db, callId } = params
   const existing = callById(db, callId)
   if (!existing) throw new Error("Call not found")
-  if (
-    existing.status === "completed" ||
-    existing.status === "declined" ||
-    existing.status === "handoff" ||
-    existing.status === "callback"
-  ) {
+  if (existing.status === "completed" || existing.status === "declined") {
     throw new Error(`Call is already ${existing.status}`)
+  }
+  // If a call is in handoff, do not run AI processing. Save customer turns
+  // as normal utterances so the human agent console can see them.
+  if (existing.status === "handoff") {
+    const transcript = callUtterances(db, callId)
+    const startedAtMs = transcript.length
+      ? transcript[transcript.length - 1].endMs + 500
+      : 0
+    const savedCustomer = saveUtterance(db, callId, "customer", params.text ?? "", startedAtMs)
+    if (params.audioBase64) {
+      const audio = Buffer.from(params.audioBase64, "base64")
+      if (audio.length) await saveTurnAudio(callId, savedCustomer.id, audio)
+    }
+    return {
+      call: callById(db, callId)!,
+      journey: getJourney(db, existing.journeyId)!,
+      audioBase64: null,
+    }
   }
 
   const journey = getJourney(db, existing.journeyId)
@@ -379,20 +391,55 @@ export async function processTurn(params: {
 
   // A long pause from the user means stop, not spin. End the call politely.
   if (!customerText) {
-    const closed = await endCallSilently(db, callId)
-    const last = closed.call.utterances[closed.call.utterances.length - 1]
-    let audioBase64: string | null = null
-    if (last && last.speaker === "ai") {
+    const transcriptNow = callUtterances(db, callId)
+    const lastUtterance = transcriptNow[transcriptNow.length - 1]
+    // If last speaker was the AI, a long silence means end the call.
+    if (!lastUtterance || lastUtterance.speaker === "ai") {
+      const closed = await endCallSilently(db, callId)
+      const last = closed.call.utterances[closed.call.utterances.length - 1]
+      let audioBase64: string | null = null
+      if (last && last.speaker === "ai") {
+        try {
+          audioBase64 = await synthesizeReply(last.text)
+        } catch (error) {
+          console.warn(
+            "[voice] TTS failed for silent-closing, continuing without audio:",
+            error instanceof Error ? error.message : error
+          )
+        }
+      }
+      return { call: closed.call, journey, audioBase64, audit: closed.audit }
+    }
+
+    // Otherwise, assume the other participant should speak next. Prompt
+    // the agent to re-engage rather than end the call immediately.
+    db.exec("BEGIN TRANSACTION")
+    try {
+      const prompt = "It seems quiet — are you still there?"
+      saveUtterance(
+        db,
+        callId,
+        "ai",
+        prompt,
+        lastUtterance.endMs + 500
+      )
+      updateCall(db, callId, { repeatCount: 0 })
+      db.exec("COMMIT")
+      let audioBase64: string | null = null
       try {
-        audioBase64 = await synthesizeReply(last.text)
+        audioBase64 = await synthesizeReply(prompt)
       } catch (error) {
         console.warn(
-          "[voice] TTS failed for silent-closing, continuing without audio:",
+          "[voice] TTS failed for quiet-prompt, continuing without audio:",
           error instanceof Error ? error.message : error
         )
       }
+      const updatedCall = callById(db, callId)!
+      return { call: updatedCall, journey: getJourney(db, journey.id)!, audioBase64 }
+    } catch (err) {
+      db.exec("ROLLBACK")
+      throw err
     }
-    return { call: closed.call, journey, audioBase64, audit: closed.audit }
   }
 
   const question = existing.consentRecorded
@@ -480,7 +527,7 @@ export async function processTurn(params: {
         journey,
         decision.handoffReason ?? "low-confidence",
         decision.handoffSummary ??
-          "AI stopped and prepared a warm handoff so the customer does not repeat information already collected.",
+        "AI stopped and prepared a warm handoff so the customer does not repeat information already collected.",
         Math.min(safetyScore, 45)
       )
       saveUtterance(db, callId, "ai", route.message, aiStartMs)
@@ -571,6 +618,14 @@ export async function processTurn(params: {
   let audit: AuditRun | null = null
   if (["completed", "declined"].includes(finalCall.status)) {
     audit = await auditFinishedCall(db, callId)
+  }
+  // When a call finishes, ensure any remaining AI-extracted fields are persisted
+  try {
+    const journeyNow = getJourney(db, journey.id)!
+    // No-op here — fields are updated during turns. If additional merge needed,
+    // an external endpoint can call /api/leads/{id}/merge-data.
+  } catch (e) {
+    console.warn("Error during post-call merge check", e)
   }
   const last = finalCall.utterances[finalCall.utterances.length - 1]
   let audioBase64: string | null = null

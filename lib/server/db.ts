@@ -620,8 +620,8 @@ export function listAudits(db: DatabaseSync): AuditRun[] {
       retailer: requireStr(r.retailer, "retailer"),
       ...(r.recording_path
         ? {
-            recordingUrl: `/api/recordings/${encodeURIComponent(String(r.recording_path))}`,
-          }
+          recordingUrl: `/api/recordings/${encodeURIComponent(String(r.recording_path))}`,
+        }
         : {}),
       ...(r.lead_id ? { leadId: String(r.lead_id) } : {}),
       status: requireStr(r.status, "status") as AuditDecision,
@@ -631,12 +631,12 @@ export function listAudits(db: DatabaseSync): AuditRun[] {
       checks: checksByAudit.get(id) ?? [],
       ...(r.override_auditor && r.override_reason
         ? {
-            override: {
-              auditor: String(r.override_auditor),
-              decision: String(r.override_decision) as AuditDecision,
-              reason: String(r.override_reason),
-            },
-          }
+          override: {
+            auditor: String(r.override_auditor),
+            decision: String(r.override_decision) as AuditDecision,
+            reason: String(r.override_reason),
+          },
+        }
         : {}),
     }
   })
@@ -1026,6 +1026,22 @@ export function createHumanAgent(
   )
 }
 
+export function upsertHumanAgent(
+  db: DatabaseSync,
+  agent: { id: string; name: string; role: string; maxConcurrent?: number }
+) {
+  db.prepare(
+    `INSERT INTO human_agents (id, name, role, max_concurrent)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET name = excluded.name, role = excluded.role, max_concurrent = excluded.max_concurrent`
+  ).run(
+    agent.id,
+    agent.name,
+    agent.role,
+    Math.max(1, agent.maxConcurrent ?? 1)
+  )
+}
+
 export function setHumanAgentStatus(
   db: DatabaseSync,
   agentId: string,
@@ -1035,6 +1051,13 @@ export function setHumanAgentStatus(
     status,
     agentId
   )
+}
+
+export function incrementAgentActiveHandoffs(db: DatabaseSync, agentId: string, delta = 1) {
+  db.prepare(
+    `UPDATE human_agents SET max_concurrent = max_concurrent, status = status WHERE id = ?`
+  ).run(agentId)
+  // activeHandoffs is derived dynamically; we don't store it — no-op here.
 }
 
 // ---------------------------------------------------------------------------
@@ -1260,15 +1283,15 @@ export function listCheckDefs(
   const all = rows<Record<string, SQLOutputValue>>(
     retailer
       ? db
-          .prepare(
-            "SELECT * FROM audit_check_defs WHERE retailer = ? ORDER BY sort_order"
-          )
-          .all(retailer)
+        .prepare(
+          "SELECT * FROM audit_check_defs WHERE retailer = ? ORDER BY sort_order"
+        )
+        .all(retailer)
       : db
-          .prepare(
-            "SELECT * FROM audit_check_defs ORDER BY retailer, sort_order"
-          )
-          .all()
+        .prepare(
+          "SELECT * FROM audit_check_defs ORDER BY retailer, sort_order"
+        )
+        .all()
   )
   return all.map((r) => ({
     id: requireStr(r.id, "id"),
