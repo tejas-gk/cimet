@@ -33,7 +33,6 @@ import {
 } from "@/components/ui/sidebar"
 
 const navItems = [
-  { href: "/", label: "Workspace", icon: LayoutGridIcon },
   { href: "/calls", label: "AI Voice Agent", icon: PhoneCallIcon },
   { href: "/solar", label: "Solar Sales Agent", icon: SunIcon },
   { href: "/auditor", label: "AI Quality Auditor", icon: ShieldCheckIcon },
@@ -63,7 +62,7 @@ export function CimetAiShell({ children }: { children: React.ReactNode }) {
               <BotIcon className="size-4" />
             </div>
             <div className="min-w-0 group-data-[collapsible=icon]:hidden">
-              <div className="truncate text-sm font-semibold">CIMET AI Ops</div>
+              <div className="truncate text-sm font-semibold">CIMET AI</div>
               <div className="truncate text-xs text-zinc-500">
                 Voice + Quality automation
               </div>

@@ -49,6 +49,8 @@ export default function SolarSalesPage() {
   const autoStopTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const [answer, setAnswer] = React.useState("")
   const [speaking, setSpeaking] = React.useState(false)
+  const [humanConnected, setHumanConnected] = React.useState(false)
+  const [humanError, setHumanError] = React.useState<string | null>(null)
 
   const busy = agent.busy || recorder.busy
   const active = agent.phase === "connected" || agent.phase === "handed-off"
@@ -114,7 +116,12 @@ export default function SolarSalesPage() {
 
   const handleEscalate = async () => {
     const result = await agent.escalate()
-    if (result) await playTurns(result.turns)
+    if (result) {
+      await playTurns(result.turns)
+      setHumanConnected(true)
+    } else {
+      setHumanError("Failed to escalate call")
+    }
   }
 
   return (
@@ -318,15 +325,49 @@ export default function SolarSalesPage() {
                 ) : null}
 
                 {agent.phase === "handed-off" ? (
-                  <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-100">
-                    <div className="font-medium text-emerald-200">
-                      Connected to David (human agent)
+                  humanConnected ? (
+                    <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-100">
+                      <div className="font-medium text-emerald-200">
+                        Connected to David (human agent)
+                      </div>
+                      <div className="mt-1">
+                        Continue talking — the human consultant has the full
+                        context.
+                      </div>
                     </div>
-                    <div className="mt-1">
-                      Continue talking — the human consultant has the full
-                      context.
+                  ) : (
+                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+                      <div className="flex items-center gap-2 font-medium">
+                        <HeadphonesIcon className="size-4" />
+
+                        {humanConnected
+                          ? "Live with human agent"
+                          : "Human handoff"}
+                      </div>
+
+                      <div className="mt-1 text-sm text-zinc-400">
+                        {humanConnected
+                          ? "Direct live audio. AI, STT and TTS are no longer in the conversation."
+                          : "Waiting for a human agent to accept…"}
+                      </div>
+
+                      {humanError && (
+                        <div className="mt-3 text-sm text-red-400">
+                          {humanError}
+                        </div>
+                      )}
+
+                      <div className="mt-2 flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => window.location.href = "/agents"}
+                        >
+                          View human agents
+                        </Button>
+                      </div>
                     </div>
-                  </div>
+                  )
                 ) : null}
               </div>
             )}
