@@ -17,7 +17,13 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 
 export type DetailRow = {
@@ -105,7 +111,9 @@ function RowField({
   value: unknown
   onChange: (value: unknown) => void
 }) {
-  const variant = getColumnVariant(column.kind === "select" ? "select" : column.kind)
+  const variant = getColumnVariant(
+    column.kind === "select" ? "select" : column.kind
+  )
   const TypeIcon = variant?.icon
   const options = column.options ?? []
 
@@ -116,16 +124,25 @@ function RowField({
         <span>{column.label}</span>
       </div>
       {column.kind === "multi-select" ? (
-        <MultiSelectEditor value={value} options={options} onChange={onChange} />
+        <MultiSelectEditor
+          value={value}
+          options={options}
+          onChange={onChange}
+        />
       ) : column.kind === "select" ? (
-        <Select value={typeof value === "string" ? value : ""} onValueChange={(next) => onChange(next === NO_VALUE ? null : next)}>
+        <Select
+          value={typeof value === "string" ? value : ""}
+          onValueChange={(next) => onChange(next === NO_VALUE ? null : next)}
+        >
           <SelectTrigger>
             <SelectValue placeholder="No value" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={NO_VALUE}>No value</SelectItem>
             {options.map((option) => (
-              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -133,7 +150,11 @@ function RowField({
         <Input
           type="number"
           defaultValue={value == null ? "" : String(value)}
-          onChange={(event) => onChange(event.target.value === "" ? null : Number(event.target.value))}
+          onChange={(event) =>
+            onChange(
+              event.target.value === "" ? null : Number(event.target.value)
+            )
+          }
         />
       ) : column.kind === "long-text" ? (
         <Textarea
@@ -143,7 +164,10 @@ function RowField({
           onChange={(event) => onChange(event.target.value)}
         />
       ) : column.kind === "checkbox" ? (
-        <Checkbox checked={Boolean(value)} onCheckedChange={(checked) => onChange(Boolean(checked))} />
+        <Checkbox
+          checked={Boolean(value)}
+          onCheckedChange={(checked) => onChange(Boolean(checked))}
+        />
       ) : column.kind === "url" ? (
         <Input
           type="url"
@@ -177,7 +201,11 @@ function MultiSelectEditor({
   onChange: (value: unknown) => void
 }) {
   const selected = React.useMemo(() => {
-    const list = Array.isArray(value) ? value : value == null || value === "" ? [] : [value]
+    const list = Array.isArray(value)
+      ? value
+      : value == null || value === ""
+        ? []
+        : [value]
     return new Set(list.map((item) => String(item)))
   }, [value])
 
@@ -192,7 +220,9 @@ function MultiSelectEditor({
   )
 
   return (
-    <div className={cn("flex flex-wrap gap-1.5", options.length === 0 && "py-1.5")}>
+    <div
+      className={cn("flex flex-wrap gap-1.5", options.length === 0 && "py-1.5")}
+    >
       {options.length === 0 ? (
         <span className="text-sm text-muted-foreground">No options</span>
       ) : (
@@ -204,7 +234,8 @@ function MultiSelectEditor({
             tabIndex={0}
             className={cn(
               "cursor-pointer transition-colors hover:bg-accent/40",
-              selected.has(option.value) && "border-primary bg-primary/10 text-primary"
+              selected.has(option.value) &&
+                "border-primary bg-primary/10 text-primary"
             )}
             onClick={() => toggle(option.value)}
             onKeyDown={(event) => {

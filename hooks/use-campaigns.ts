@@ -46,13 +46,7 @@ const initialCampaigns: CampaignSummary[] = [
     18
   ),
   buildCampaign("campaign_2", "Follow-ups · Q3 List", false, "8.1%", 6),
-  buildCampaign(
-    "campaign_3",
-    "Partnerships · Warm Intro",
-    true,
-    "21.0%",
-    12
-  ),
+  buildCampaign("campaign_3", "Partnerships · Warm Intro", true, "21.0%", 12),
 ]
 
 export function useCampaigns(limit = 20) {

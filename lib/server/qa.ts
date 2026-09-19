@@ -56,7 +56,7 @@ export function planForRetailer(retailer: string): QaPlan {
   const key = retailer.toLowerCase().replace(/[^a-z]/g, "")
   return (
     qaPlans.find(
-      (p) => p.retailer.toLowerCase().replace(/[^a-z]/g, "") === key,
+      (p) => p.retailer.toLowerCase().replace(/[^a-z]/g, "") === key
     ) ?? {
       planId: "UNKNOWN",
       retailer: retailer || "Unknown",
@@ -74,8 +74,7 @@ export function planForRetailer(retailer: string): QaPlan {
 // ---------------------------------------------------------------------------
 
 export type FactTarget =
-  | { kind: "lead"; field: string }
-  | { kind: "plan"; field: string }
+  { kind: "lead"; field: string } | { kind: "plan"; field: string }
 
 export type QaCheckDef = {
   key: string
@@ -252,7 +251,7 @@ export const behaviourChecks: QaCheckDef[] = [
  */
 export function checkDefsFor(
   retailer: string,
-  facts: Record<string, string | undefined>,
+  facts: Record<string, string | undefined>
 ): QaCheckDef[] {
   const plan = planForRetailer(retailer)
   const defs: QaCheckDef[] = []

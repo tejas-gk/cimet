@@ -1,21 +1,28 @@
 import type { DatabaseSync } from "node:sqlite"
 
-import { listAudits, listCalls, updateCall } from "@/lib/server/db"
+import {
+  createHandoff,
+  createUtterance,
+  listAudits,
+  listCalls,
+  updateCall,
+} from "@/lib/server/db"
 import { runAudit } from "@/lib/server/auditor"
 import { factsFromJourney } from "@/lib/server/call-audit"
-import {
-  endCallSilently,
-  processTurn,
-  startCall,
-  synthesizeReply,
-} from "@/lib/server/voice-agent"
 import { savePhoneTtsAudio } from "@/lib/server/phone/audio"
-import { gather, hangup, play, response, say } from "@/lib/server/phone/twiml"
+import { gather, play, response, say } from "@/lib/server/phone/twiml"
+import {
+  processSolarTurn,
+  SOLAR_GREETING,
+  synthesizeGreeting,
+} from "@/lib/server/solar-agent"
+import type { SolarConversationLine } from "@/lib/server/solar-agent"
 import type {
   PhoneDialResult,
   PhoneProvider,
   PhoneTurnResult,
 } from "@/lib/server/phone/types"
+import type { Speaker, Utterance } from "@/lib/cimet-ai-types"
 
 function requiredEnv(key: string) {
   const value = process.env[key]?.trim()
@@ -29,6 +36,45 @@ function publicBaseUrl() {
 
 function callById(db: DatabaseSync, callId: string) {
   return listCalls(db).find((call) => call.id === callId) ?? null
+}
+
+function nextStartMs(utterances: Utterance[]) {
+  return utterances.length ? utterances[utterances.length - 1].endMs + 500 : 0
+}
+
+function savePhoneUtterance(
+  db: DatabaseSync,
+  callId: string,
+  speaker: Speaker,
+  text: string,
+  startMs: number
+) {
+  createUtterance(db, {
+    id: crypto.randomUUID(),
+    callId,
+    speaker,
+    text,
+    startMs,
+    endMs: startMs + Math.max(1800, text.length * 45),
+  })
+}
+
+function solarHistory(utterances: Utterance[]) {
+  const history: SolarConversationLine[] = []
+  for (const utterance of utterances) {
+    if (utterance.speaker === "customer") {
+      history.push({ speaker: "user", text: utterance.text })
+    } else if (utterance.speaker === "ai") {
+      history.push({ speaker: "ai", text: utterance.text })
+    } else if (utterance.speaker === "human-agent") {
+      history.push({ speaker: "human-agent", text: utterance.text })
+    }
+  }
+  return history.slice(-20)
+}
+
+function isHumanAgentActive(utterances: Utterance[]) {
+  return utterances.some((utterance) => utterance.speaker === "human-agent")
 }
 
 function absoluteUrl(path: string) {
@@ -59,12 +105,14 @@ function continueConversation(
   )
 }
 
-function finishConversation(
+function continueConversationTurns(
   callId: string,
-  audioBase64: string | null | undefined,
-  fallbackText: string
+  turns: Array<{ audioBase64: string | null; text: string }>
 ) {
-  return response(`${audioTag(callId, audioBase64, fallbackText)}${hangup()}`)
+  const children = turns
+    .map((turn) => audioTag(callId, turn.audioBase64, turn.text))
+    .join("")
+  return response(gather(speechAction(callId), children))
 }
 
 function twilioAuthHeader() {
@@ -169,36 +217,83 @@ export const twilioPhoneProvider: PhoneProvider = {
   },
 
   async initialTwiml(db, callId): Promise<string> {
-    const result = await startCall(db, callId)
-    return continueConversation(
-      callId,
-      result.audioBase64,
-      result.call.utterances.at(-1)?.text ?? "Hello from CIMET."
-    )
+    const call = callById(db, callId)
+    if (!call) throw new Error("Call not found")
+
+    if (call.utterances.length === 0) {
+      db.exec("BEGIN TRANSACTION")
+      try {
+        savePhoneUtterance(db, callId, "ai", SOLAR_GREETING, 0)
+        updateCall(db, callId, {
+          status: "collecting",
+          startedAt: new Date().toISOString(),
+        })
+        db.exec("COMMIT")
+      } catch (error) {
+        db.exec("ROLLBACK")
+        throw error
+      }
+    }
+
+    const audioBase64 = await synthesizeGreeting()
+    return continueConversation(callId, audioBase64, SOLAR_GREETING)
   },
 
   async turnTwiml(db, callId, speech): Promise<PhoneTurnResult> {
     const text = speech.trim()
     if (!text) {
-      const result = await endCallSilently(db, callId)
-      const closing = result.call.utterances.at(-1)?.text ?? "Goodbye."
-      const audio = await synthesizeReply(closing).catch(() => null)
       return {
-        twiml: finishConversation(callId, audio, closing),
-        audit: result.audit,
+        twiml: continueConversation(
+          callId,
+          null,
+          "Sorry, I didn't catch that. Could you say it again?"
+        ),
+        audit: null,
       }
     }
 
-    const result = await processTurn({ db, callId, text })
-    const reply = result.call.utterances.at(-1)?.text ?? "Thank you."
-    const terminal = ["completed", "declined", "handoff"].includes(
-      result.call.status
-    )
+    const call = callById(db, callId)
+    if (!call) throw new Error("Call not found")
+
+    const result = await processSolarTurn({
+      text,
+      history: solarHistory(call.utterances),
+      humanAgent: !!call.handoff || isHumanAgentActive(call.utterances),
+    })
+
+    db.exec("BEGIN TRANSACTION")
+    try {
+      let startMs = nextStartMs(call.utterances)
+      savePhoneUtterance(db, callId, "customer", result.transcript, startMs)
+      startMs += Math.max(1800, result.transcript.length * 45) + 500
+
+      for (const turn of result.turns) {
+        savePhoneUtterance(db, callId, turn.speaker, turn.text, startMs)
+        startMs += Math.max(1800, turn.text.length * 45) + 500
+      }
+
+      if (result.handoff && !call.handoff) {
+        createHandoff(db, {
+          callId,
+          reason: result.handoff.reason,
+          summary: result.handoff.summary,
+          collected: result.handoff.collected,
+          remaining: [],
+        })
+        updateCall(db, callId, { status: "handoff" })
+      } else if (call.status !== "handoff") {
+        updateCall(db, callId, { status: "collecting" })
+      }
+
+      db.exec("COMMIT")
+    } catch (error) {
+      db.exec("ROLLBACK")
+      throw error
+    }
+
     return {
-      twiml: terminal
-        ? finishConversation(callId, result.audioBase64, reply)
-        : continueConversation(callId, result.audioBase64, reply),
-      audit: result.audit ?? null,
+      twiml: continueConversationTurns(callId, result.turns),
+      audit: null,
     }
   },
 

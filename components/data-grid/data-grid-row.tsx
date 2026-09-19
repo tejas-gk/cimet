@@ -257,7 +257,10 @@ function DataGridRowImpl<TData>({
             data-slot="grid-cell"
             tabIndex={-1}
             className={cn({
-              grow: stretchColumns && columnId !== "select" && !cell.column.getIsPinned(),
+              grow:
+                stretchColumns &&
+                columnId !== "select" &&
+                !cell.column.getIsPinned(),
               "border-e": showEndBorder && columnId !== "select",
               "border-s": showStartBorder && columnId !== "select",
             })}

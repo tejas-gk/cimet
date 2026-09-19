@@ -38,31 +38,39 @@ export function useLeads() {
   }, [])
 
   const latestDraft = React.useMemo(
-    () => leads.filter((lead) => !lead.submitted).sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null,
+    () =>
+      leads
+        .filter((lead) => !lead.submitted)
+        .sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null,
     [leads]
   )
 
-  const upsertDraft = React.useCallback((patch: Partial<Lead> & { id: string }) => {
-    const now = Date.now()
-    const current = leadsRef.current
-    const existing = current.find((lead) => lead.id === patch.id)
-    const draft: Lead = {
-      ...(existing ?? emptyLead()),
-      ...patch,
-      updatedAt: now,
-    }
-    const next = existing
-      ? current.map((lead) => (lead.id === patch.id ? draft : lead))
-      : [...current, draft]
-    leadsRef.current = next
-    setLeads(next)
-    saveLeads(next)
-  }, [])
+  const upsertDraft = React.useCallback(
+    (patch: Partial<Lead> & { id: string }) => {
+      const now = Date.now()
+      const current = leadsRef.current
+      const existing = current.find((lead) => lead.id === patch.id)
+      const draft: Lead = {
+        ...(existing ?? emptyLead()),
+        ...patch,
+        updatedAt: now,
+      }
+      const next = existing
+        ? current.map((lead) => (lead.id === patch.id ? draft : lead))
+        : [...current, draft]
+      leadsRef.current = next
+      setLeads(next)
+      saveLeads(next)
+    },
+    []
+  )
 
   const submitLead = React.useCallback((id: string) => {
     const current = leadsRef.current
     const next = current.map((lead) =>
-      lead.id === id ? { ...lead, submitted: true, updatedAt: Date.now() } : lead
+      lead.id === id
+        ? { ...lead, submitted: true, updatedAt: Date.now() }
+        : lead
     )
     leadsRef.current = next
     setLeads(next)

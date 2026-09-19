@@ -45,11 +45,33 @@ const SEED_JOURNEYS: SeedJourney[] = [
     abandonStep: "Move-in details",
     doNotCall: false,
     fields: [
-      { key: "postcode", label: "Postcode", value: "2000", required: true, collectedBy: "customer" },
-      { key: "propertyType", label: "Property type", value: "Apartment", required: true, collectedBy: "customer" },
+      {
+        key: "postcode",
+        label: "Postcode",
+        value: "2000",
+        required: true,
+        collectedBy: "customer",
+      },
+      {
+        key: "propertyType",
+        label: "Property type",
+        value: "Apartment",
+        required: true,
+        collectedBy: "customer",
+      },
       { key: "moveInDate", label: "Move-in date", value: null, required: true },
-      { key: "lifeSupport", label: "Life support equipment", value: null, required: true },
-      { key: "currentRetailer", label: "Current retailer", value: null, required: false },
+      {
+        key: "lifeSupport",
+        label: "Life support equipment",
+        value: null,
+        required: true,
+      },
+      {
+        key: "currentRetailer",
+        label: "Current retailer",
+        value: null,
+        required: false,
+      },
     ],
     callId: "call-1001",
   },
@@ -64,9 +86,26 @@ const SEED_JOURNEYS: SeedJourney[] = [
     abandonStep: "Usage estimate",
     doNotCall: false,
     fields: [
-      { key: "postcode", label: "Postcode", value: "3000", required: true, collectedBy: "customer" },
-      { key: "propertyType", label: "Property type", value: "House", required: true, collectedBy: "customer" },
-      { key: "usage", label: "Estimated quarterly usage", value: null, required: true },
+      {
+        key: "postcode",
+        label: "Postcode",
+        value: "3000",
+        required: true,
+        collectedBy: "customer",
+      },
+      {
+        key: "propertyType",
+        label: "Property type",
+        value: "House",
+        required: true,
+        collectedBy: "customer",
+      },
+      {
+        key: "usage",
+        label: "Estimated quarterly usage",
+        value: null,
+        required: true,
+      },
       { key: "solar", label: "Solar installed", value: null, required: true },
     ],
     callId: "call-1002",
@@ -82,18 +121,35 @@ const SEED_JOURNEYS: SeedJourney[] = [
     abandonStep: "Plan confirmation",
     doNotCall: false,
     fields: [
-      { key: "postcode", label: "Postcode", value: "4000", required: true, collectedBy: "customer" },
-      { key: "moveInDate", label: "Move-in date", value: "22 Sep 2026", required: true, collectedBy: "ai" },
-      { key: "concession", label: "Concession card", value: null, required: true },
+      {
+        key: "postcode",
+        label: "Postcode",
+        value: "4000",
+        required: true,
+        collectedBy: "customer",
+      },
+      {
+        key: "moveInDate",
+        label: "Move-in date",
+        value: "22 Sep 2026",
+        required: true,
+        collectedBy: "ai",
+      },
+      {
+        key: "concession",
+        label: "Concession card",
+        value: null,
+        required: true,
+      },
     ],
     callId: "call-1003",
   },
 ]
 
 export function ensureSeeded(db: DatabaseSync) {
-  const existing = db
-    .prepare("SELECT COUNT(*) AS n FROM journeys")
-    .get() as { n: number }
+  const existing = db.prepare("SELECT COUNT(*) AS n FROM journeys").get() as {
+    n: number
+  }
   if (Number(existing.n) > 0) return
 
   db.exec("BEGIN TRANSACTION")

@@ -166,12 +166,18 @@ function extractJsonObject<T>(content: string): T {
   const start = candidate.search(/[{[]/)
   const end = Math.max(candidate.lastIndexOf("}"), candidate.lastIndexOf("]"))
   if (start === -1 || end === -1) {
-    throw new SarvamApiError(`Model output is not JSON: ${content.slice(0, 200)}`, 200)
+    throw new SarvamApiError(
+      `Model output is not JSON: ${content.slice(0, 200)}`,
+      200
+    )
   }
   try {
     return JSON.parse(candidate.slice(start, end + 1)) as T
   } catch {
-    throw new SarvamApiError(`Could not parse model JSON: ${content.slice(0, 200)}`, 200)
+    throw new SarvamApiError(
+      `Could not parse model JSON: ${content.slice(0, 200)}`,
+      200
+    )
   }
 }
 
@@ -311,7 +317,10 @@ export async function textToSpeech(input: {
   )
 
   if (!data.audios) {
-    throw new SarvamApiError(data.error?.message ?? "Sarvam TTS returned no audio", 200)
+    throw new SarvamApiError(
+      data.error?.message ?? "Sarvam TTS returned no audio",
+      200
+    )
   }
 
   const audio = Buffer.from(data.audios.join(""), "base64")

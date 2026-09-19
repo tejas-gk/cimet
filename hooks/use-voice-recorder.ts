@@ -39,7 +39,8 @@ export function useVoiceRecorder() {
   const [recording, setRecording] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [supported] = React.useState(
-    typeof window !== "undefined" && !!(window.MediaRecorder && window.AudioContext)
+    typeof window !== "undefined" &&
+      !!(window.MediaRecorder && window.AudioContext)
   )
   const [level, setLevel] = React.useState(0)
   const [durationMs, setDurationMs] = React.useState(0)
@@ -56,7 +57,10 @@ export function useVoiceRecorder() {
       streamRef.current = stream
 
       const mimeType = pickMimeType()
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+      const recorder = new MediaRecorder(
+        stream,
+        mimeType ? { mimeType } : undefined
+      )
       recorderRef.current = recorder
       chunksRef.current = []
       recorder.ondataavailable = (event) => {
@@ -64,14 +68,19 @@ export function useVoiceRecorder() {
       }
 
       try {
-        const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+        const Ctx =
+          window.AudioContext ??
+          (window as unknown as { webkitAudioContext: typeof AudioContext })
+            .webkitAudioContext
         const context = new Ctx()
         const source = context.createMediaStreamSource(stream)
         const analyser = context.createAnalyser()
         analyser.fftSize = 512
         source.connect(analyser)
         analyserRef.current = analyser
-        dataRef.current = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount))
+        dataRef.current = new Uint8Array(
+          new ArrayBuffer(analyser.frequencyBinCount)
+        )
       } catch {
         analyserRef.current = null
       }
@@ -87,14 +96,22 @@ export function useVoiceRecorder() {
           let avg = 0
           if (analyserRef.current && dataRef.current) {
             analyserRef.current.getByteFrequencyData(dataRef.current)
-            avg = dataRef.current.reduce((a, b) => a + b, 0) / dataRef.current.length / 255
+            avg =
+              dataRef.current.reduce((a, b) => a + b, 0) /
+              dataRef.current.length /
+              255
             setLevel(Math.min(1, Math.max(0, avg * 3.2)))
           }
           // A long pause from the user means stop only: auto-stop on sustained
           // silence (once some audio has been captured) and hand it off.
           const opts = optsRef.current
           const silenceLevel = opts?.silenceLevel ?? 0.03
-          if (opts && analyserRef.current && dataRef.current && avg < silenceLevel) {
+          if (
+            opts &&
+            analyserRef.current &&
+            dataRef.current &&
+            avg < silenceLevel
+          ) {
             if (silentSinceRef.current === null) {
               silentSinceRef.current = now
             } else if (
@@ -159,12 +176,17 @@ export function useVoiceRecorder() {
     return result
   }, [])
 
-  const play = React.useCallback((base64: string, mime = "audio/wav") => {
-    playingRef.current?.pause()
-    const audio = new Audio(audioSrc(base64, mime))
-    playingRef.current = audio
-    void audio.play().catch(() => setError("Audio playback blocked in this browser"))
-  }, [setError])
+  const play = React.useCallback(
+    (base64: string, mime = "audio/wav") => {
+      playingRef.current?.pause()
+      const audio = new Audio(audioSrc(base64, mime))
+      playingRef.current = audio
+      void audio
+        .play()
+        .catch(() => setError("Audio playback blocked in this browser"))
+    },
+    [setError]
+  )
 
   const stopPlayback = React.useCallback(() => {
     playingRef.current?.pause()
@@ -179,7 +201,18 @@ export function useVoiceRecorder() {
     }
   }, [])
 
-  return { supported, recording, busy, level, durationMs, error, start, stop, play, stopPlayback }
+  return {
+    supported,
+    recording,
+    busy,
+    level,
+    durationMs,
+    error,
+    start,
+    stop,
+    play,
+    stopPlayback,
+  }
 }
 
 function pickMimeType(): string | null {
@@ -194,12 +227,17 @@ async function blobToWavBase64(blob: Blob): Promise<string> {
   const arrayBuffer = await blob.arrayBuffer()
   const Ctx =
     window.AudioContext ??
-    (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+    (window as unknown as { webkitAudioContext: typeof AudioContext })
+      .webkitAudioContext
   const context = new Ctx()
   const audioBuffer = await context.decodeAudioData(arrayBuffer)
 
   const targetRate = 16000
-  const offline = new OfflineAudioContext(1, Math.ceil(audioBuffer.length * (targetRate / audioBuffer.sampleRate)), targetRate)
+  const offline = new OfflineAudioContext(
+    1,
+    Math.ceil(audioBuffer.length * (targetRate / audioBuffer.sampleRate)),
+    targetRate
+  )
   const source = offline.createBufferSource()
   source.buffer = audioBuffer
   source.connect(offline.destination)
@@ -236,7 +274,10 @@ async function blobToWavBase64(blob: Blob): Promise<string> {
   let binary = ""
   const chunk = 0x8000
   for (let i = 0; i < wav.length; i += chunk) {
-    binary += String.fromCharCode.apply(null, Array.from(wav.subarray(i, i + chunk)))
+    binary += String.fromCharCode.apply(
+      null,
+      Array.from(wav.subarray(i, i + chunk))
+    )
   }
   return btoa(binary)
 }

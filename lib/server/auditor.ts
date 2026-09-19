@@ -21,11 +21,7 @@
 import fs from "node:fs"
 import path from "node:path"
 
-import {
-  chatJson,
-  speechToText,
-  SARVAM_MODELS,
-} from "@/lib/server/sarvam"
+import { chatJson, speechToText, SARVAM_MODELS } from "@/lib/server/sarvam"
 import { planForRetailer, checkDefsFor, type QaCheckDef } from "@/lib/server/qa"
 import {
   normalizeValue,
@@ -67,10 +63,7 @@ export function recordingsDir() {
   return RECORDINGS_DIR
 }
 
-export function saveRecording(
-  id: string,
-  audio: Buffer
-): string {
+export function saveRecording(id: string, audio: Buffer): string {
   const target = path.join(recordingsDir(), `${id}.wav`)
   fs.writeFileSync(target, audio)
   return `${id}.wav`
@@ -107,13 +100,17 @@ type AttributedChunk = {
   confidence: number
 }
 
-async function attributeSpeakers(chunks: Array<{ text: string }>): Promise<AttributedChunk[]> {
-  const chunkList = chunks
-    .map((c, i) => `${i}. ${c.text}`)
-    .join("\n")
+async function attributeSpeakers(
+  chunks: Array<{ text: string }>
+): Promise<AttributedChunk[]> {
+  const chunkList = chunks.map((c, i) => `${i}. ${c.text}`).join("\n")
 
   const attribution = await chatJson<{
-    speakers: Array<{ chunkIndex: number; speaker: "customer" | "sales-agent"; confidence: number }>
+    speakers: Array<{
+      chunkIndex: number
+      speaker: "customer" | "sales-agent"
+      confidence: number
+    }>
   }>({
     model: SARVAM_MODELS.voice,
     maxTokens: 700,
@@ -121,7 +118,7 @@ async function attributeSpeakers(chunks: Array<{ text: string }>): Promise<Attri
       {
         role: "system",
         content:
-          "You are a call-analytics engine. You are given consecutive chunks of a transcribed sales call between one sales agent and one customer. Assign each chunk to the speaker who most likely said it. Use cues from wording (policy phrasing, rate/plan details, disclaimers, greetings vs. personal questions, confirmations). Respond with ONLY a JSON object: {\"speakers\": [{\"chunkIndex\": number, \"speaker\": \"customer\"|\"sales-agent\", \"confidence\": 0-100}]}",
+          'You are a call-analytics engine. You are given consecutive chunks of a transcribed sales call between one sales agent and one customer. Assign each chunk to the speaker who most likely said it. Use cues from wording (policy phrasing, rate/plan details, disclaimers, greetings vs. personal questions, confirmations). Respond with ONLY a JSON object: {"speakers": [{"chunkIndex": number, "speaker": "customer"|"sales-agent", "confidence": 0-100}]}',
       },
       {
         role: "user",
@@ -160,8 +157,10 @@ async function attributeSpeakers(chunks: Array<{ text: string }>): Promise<Attri
 function heuristicSpeaker(text: string): "customer" | "sales-agent" {
   const agentPhrases =
     /(recorded|quality|compliance|plan|tariff|kilowatt|cents|kWh|pricing|energy|contract|bill|concession|retailer|rate|market|terms|confirmation|thank you for)/i
-  const customerPhrases = /(okay|yes|no|sorry|hmm|um|I think|can you|why|really|what?|so|but|fine|sure)/i
-  if (agentPhrases.test(text) && !customerPhrases.test(text)) return "sales-agent"
+  const customerPhrases =
+    /(okay|yes|no|sorry|hmm|um|I think|can you|why|really|what?|so|but|fine|sure)/i
+  if (agentPhrases.test(text) && !customerPhrases.test(text))
+    return "sales-agent"
   return "customer"
 }
 
@@ -172,7 +171,8 @@ function buildUtterances(
   idPrefix: string
 ): Utterance[] {
   const utterances: Utterance[] = []
-  let current: { speaker: string; text: string[]; startMs: number } | null = null
+  let current: { speaker: string; text: string[]; startMs: number } | null =
+    null
 
   chunks.forEach((chunk, index) => {
     const startMs = chunkStarts[index] ?? 0
@@ -186,7 +186,11 @@ function buildUtterances(
   })
   if (current) pushUtterance(current)
 
-  function pushUtterance(group: { speaker: string; text: string[]; startMs: number }) {
+  function pushUtterance(group: {
+    speaker: string
+    text: string[]
+    startMs: number
+  }) {
     let start = group.startMs
     let end = start
     chunks.forEach((c, i) => {
@@ -224,7 +228,10 @@ function transcriptLines(utterances: Utterance[]): string {
 }
 
 /** Verbatim requirement → deterministic token-similarity match. */
-function runScriptVerbatim(def: QaCheckDef, utterances: Utterance[]): AuditCheck {
+function runScriptVerbatim(
+  def: QaCheckDef,
+  utterances: Utterance[]
+): AuditCheck {
   const expected = def.verbatim ?? ""
   const agentUtterances = utterances.filter((u) => u.speaker !== "customer")
   let best: { sim: number; utt: Utterance | null } = { sim: 0, utt: null }
@@ -232,7 +239,10 @@ function runScriptVerbatim(def: QaCheckDef, utterances: Utterance[]): AuditCheck
     const sim = phraseSimilarity(expected, utt.text)
     if (sim > best.sim) best = { sim, utt }
   }
-  const concatSim = phraseSimilarity(expected, agentUtterances.map((u) => u.text).join(" "))
+  const concatSim = phraseSimilarity(
+    expected,
+    agentUtterances.map((u) => u.text).join(" ")
+  )
   if (concatSim > best.sim) best = { sim: concatSim, utt: best.utt }
 
   const evidence =
@@ -276,7 +286,10 @@ function runScriptVerbatim(def: QaCheckDef, utterances: Utterance[]): AuditCheck
 }
 
 /** Semantic requirement → LLM classification with evidence. */
-async function runScriptSemantic(def: QaCheckDef, utterances: Utterance[]): Promise<AuditCheck> {
+async function runScriptSemantic(
+  def: QaCheckDef,
+  utterances: Utterance[]
+): Promise<AuditCheck> {
   try {
     const result = await chatJson<{
       asked: "yes" | "no" | "partial"
@@ -299,7 +312,7 @@ async function runScriptSemantic(def: QaCheckDef, utterances: Utterance[]): Prom
     })
 
     const utt = result.utteranceId
-      ? utterances.find((u) => u.id === result.utteranceId) ?? null
+      ? (utterances.find((u) => u.id === result.utteranceId) ?? null)
       : null
     const evidence = utt
       ? [
@@ -313,7 +326,11 @@ async function runScriptSemantic(def: QaCheckDef, utterances: Utterance[]): Prom
       : []
 
     const verdict: AuditVerdict =
-      result.asked === "yes" ? "pass" : result.asked === "no" ? "fail" : "review"
+      result.asked === "yes"
+        ? "pass"
+        : result.asked === "no"
+          ? "fail"
+          : "review"
 
     return {
       id: def.key,
@@ -321,8 +338,7 @@ async function runScriptSemantic(def: QaCheckDef, utterances: Utterance[]): Prom
       type: "script",
       critical: def.critical,
       verdict,
-      confidence:
-        result.asked === "yes" ? 90 : result.asked === "no" ? 85 : 55,
+      confidence: result.asked === "yes" ? 90 : result.asked === "no" ? 85 : 55,
       finding:
         result.asked === "yes"
           ? "Requirement satisfied on the call."
@@ -367,16 +383,20 @@ const EXTRACTION_FIELDS: Record<string, string> = {
   nmiMirn: "the NMI or MIRN identifier (digits only)",
   fuelType: "fuel type as 'electricity' or 'gas'",
   concession: "whether the customer holds a concession card — 'yes' or 'no'",
-  lifeSupport: "whether any person at the address requires life-support equipment — 'yes' or 'no'",
+  lifeSupport:
+    "whether any person at the address requires life-support equipment — 'yes' or 'no'",
   moveInDate: "the move-in date as YYYY-MM-DD",
 }
 
 async function extractSpokenFacts(
   utterances: Utterance[],
-  defs: QaCheckDef[],
+  defs: QaCheckDef[]
 ): Promise<ExtractedFact[]> {
   const fields = defs
-    .filter((d) => d.category === "fact" && d.extractAs && EXTRACTION_FIELDS[d.extractAs])
+    .filter(
+      (d) =>
+        d.category === "fact" && d.extractAs && EXTRACTION_FIELDS[d.extractAs]
+    )
     .map((d) => d.extractAs as string)
   const unique = [...new Set(fields)]
   if (unique.length === 0) return []
@@ -392,7 +412,7 @@ async function extractSpokenFacts(
       {
         role: "system",
         content:
-          "You are a compliance data-extraction engine. Your ONLY job is to find values the speaker actually said — never judge or infer. Values may be given in words (\"twenty eight point six\"). Include an entry ONLY when a value was actually spoken; omit everything else. Respond with ONLY JSON: {\"extracted\":[{\"field\":\"...\",\"value\":\"...\",\"utteranceId\":\"utt id\",\"confidence\":0-100}]}",
+          'You are a compliance data-extraction engine. Your ONLY job is to find values the speaker actually said — never judge or infer. Values may be given in words ("twenty eight point six"). Include an entry ONLY when a value was actually spoken; omit everything else. Respond with ONLY JSON: {"extracted":[{"field":"...","value":"...","utteranceId":"utt id","confidence":0-100}]}',
       },
       {
         role: "user",
@@ -402,7 +422,7 @@ async function extractSpokenFacts(
   })
 
   return (result.extracted ?? []).filter(
-    (e) => e && typeof e.field === "string" && typeof e.value === "string",
+    (e) => e && typeof e.field === "string" && typeof e.value === "string"
   )
 }
 
@@ -411,20 +431,20 @@ function runFactCheck(
   extracted: ExtractedFact[],
   facts: AuditLeadFacts,
   plan: ReturnType<typeof planForRetailer>,
-  utterances: Utterance[],
+  utterances: Utterance[]
 ): AuditCheck {
   const normalize = (def.normalize ?? "text") as NormalizeKind
   const rawExpected = String(
     def.source?.kind === "plan"
-      ? plan[def.source.field as keyof typeof plan] ?? ""
-      : facts[def.source?.field as keyof AuditLeadFacts] ?? "",
+      ? (plan[def.source.field as keyof typeof plan] ?? "")
+      : (facts[def.source?.field as keyof AuditLeadFacts] ?? "")
   )
   const expected = normalizeValue(normalize, rawExpected)
   const hit = extracted.find((e) => e.field === def.extractAs)
   const rawSpoken = hit?.value ?? ""
   const spoken = normalizeValue(normalize, rawSpoken)
   const utt = hit?.utteranceId
-    ? utterances.find((u) => u.id === hit.utteranceId) ?? null
+    ? (utterances.find((u) => u.id === hit.utteranceId) ?? null)
     : null
 
   const evidence =
@@ -489,11 +509,13 @@ function runFactCheck(
 
 function findUtteranceAt(
   utterances: Utterance[],
-  timeMs: number,
+  timeMs: number
 ): Utterance | null {
   return (
     utterances.find((u) => timeMs >= u.startMs && timeMs <= u.endMs) ??
-    [...utterances].sort((a, b) => a.startMs - b.startMs).findLast((u) => u.startMs <= timeMs) ??
+    [...utterances]
+      .sort((a, b) => a.startMs - b.startMs)
+      .findLast((u) => u.startMs <= timeMs) ??
     null
   )
 }
@@ -501,7 +523,7 @@ function findUtteranceAt(
 function runDeadAirCheck(
   def: QaCheckDef,
   chunks: Array<{ startMs: number; endMs: number }>,
-  utterances: Utterance[],
+  utterances: Utterance[]
 ): AuditCheck {
   const sorted = [...chunks].sort((a, b) => a.startMs - b.startMs)
   let maxGapMs = 0
@@ -520,16 +542,17 @@ function runDeadAirCheck(
 
   const triggered = maxGapMs > DEAD_AIR_WARNING_MS
   const seconds = Math.round(maxGapMs / 1000)
-  const evidence = triggered && nextUtt
-    ? [
-        {
-          utteranceId: nextUtt.id,
-          startMs: gapAtStart,
-          endMs: gapAtEnd,
-          quote: nextUtt.text,
-        },
-      ]
-    : []
+  const evidence =
+    triggered && nextUtt
+      ? [
+          {
+            utteranceId: nextUtt.id,
+            startMs: gapAtStart,
+            endMs: gapAtEnd,
+            quote: nextUtt.text,
+          },
+        ]
+      : []
 
   return {
     id: def.key,
@@ -547,7 +570,7 @@ function runDeadAirCheck(
 
 function runInterruptionCheck(
   def: QaCheckDef,
-  utterances: Utterance[],
+  utterances: Utterance[]
 ): AuditCheck {
   const sorted = [...utterances].sort((a, b) => a.startMs - b.startMs)
   const overlaps: Array<{ a: Utterance; b: Utterance; ms: number }> = []
@@ -591,7 +614,10 @@ function runInterruptionCheck(
   }
 }
 
-async function runRapportCheck(def: QaCheckDef, utterances: Utterance[]): Promise<AuditCheck> {
+async function runRapportCheck(
+  def: QaCheckDef,
+  utterances: Utterance[]
+): Promise<AuditCheck> {
   try {
     const result = await chatJson<{
       issue: boolean
@@ -614,7 +640,7 @@ async function runRapportCheck(def: QaCheckDef, utterances: Utterance[]): Promis
     })
 
     const utt = result.utteranceId
-      ? utterances.find((u) => u.id === result.utteranceId) ?? null
+      ? (utterances.find((u) => u.id === result.utteranceId) ?? null)
       : null
     const evidence = utt
       ? [
@@ -657,7 +683,10 @@ async function runRapportCheck(def: QaCheckDef, utterances: Utterance[]): Promis
 // Rule engine — deterministic final decision
 // ---------------------------------------------------------------------------
 
-function routeAudit(checks: AuditCheck[]): { status: AuditDecision; confidence: number } {
+function routeAudit(checks: AuditCheck[]): {
+  status: AuditDecision
+  confidence: number
+} {
   // Behaviour checks are coaching-only and non-blocking; they do not gate.
   const gating = checks.filter((c) => c.type !== "behaviour")
   const critical = gating.filter((c) => c.critical)
@@ -740,7 +769,11 @@ export async function runAudit(input: {
   const words = stt.chunks
   const segments: Array<{ text: string; startMs: number; endMs: number }> = []
   if (words.length) {
-    let segment: { words: string[]; startMs: number; lastEndMs: number } | null = null
+    let segment: {
+      words: string[]
+      startMs: number
+      lastEndMs: number
+    } | null = null
     const pushSegment = () => {
       if (!segment) return
       segments.push({
@@ -752,10 +785,18 @@ export async function runAudit(input: {
     }
     for (const word of words) {
       if (!segment) {
-        segment = { words: [word.text], startMs: word.startMs, lastEndMs: word.endMs }
+        segment = {
+          words: [word.text],
+          startMs: word.startMs,
+          lastEndMs: word.endMs,
+        }
       } else if (word.startMs - segment.lastEndMs >= 450) {
         pushSegment()
-        segment = { words: [word.text], startMs: word.startMs, lastEndMs: word.endMs }
+        segment = {
+          words: [word.text],
+          startMs: word.startMs,
+          lastEndMs: word.endMs,
+        }
       } else {
         segment.words.push(word.text)
         segment.lastEndMs = word.endMs
@@ -763,10 +804,16 @@ export async function runAudit(input: {
     }
     pushSegment()
   } else {
-    segments.push({ text: stt.transcript, startMs: 0, endMs: stt.transcript.length * 60 })
+    segments.push({
+      text: stt.transcript,
+      startMs: 0,
+      endMs: stt.transcript.length * 60,
+    })
   }
 
-  const attributed = await attributeSpeakers(segments.map((s) => ({ text: s.text })))
+  const attributed = await attributeSpeakers(
+    segments.map((s) => ({ text: s.text }))
+  )
   const utterances = buildUtterances(
     attributed,
     segments.map((s) => s.startMs),
@@ -813,7 +860,9 @@ export async function runAudit(input: {
   const summary = buildSummary(checks, routing.status)
 
   // 6. Persist (audio, transcript, checks, evidence).
-  const recordingPath = input.persistAudio ? saveRecording(auditId, input.audio) : undefined
+  const recordingPath = input.persistAudio
+    ? saveRecording(auditId, input.audio)
+    : undefined
 
   const { createAuditFull } = await import("@/lib/server/db")
   const db = (await import("@/lib/server/db")).getDb()
@@ -830,7 +879,9 @@ export async function runAudit(input: {
     ...(input.leadId ? { leadId: input.leadId } : {}),
   })
 
-  const audit = (await import("@/lib/server/db")).listAudits(db).find((a) => a.id === auditId)
+  const audit = (await import("@/lib/server/db"))
+    .listAudits(db)
+    .find((a) => a.id === auditId)
   if (!audit) throw new AuditError("Audit failed to persist", "persist_failed")
 
   return { audit, transcript: transcriptText }

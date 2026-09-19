@@ -4,7 +4,11 @@ import path from "node:path"
 import { NextResponse } from "next/server"
 
 import { getDb, getLeadRecording, saveLeadRecording } from "@/lib/server/db"
-import { SarvamApiError, speechToText, type SpeechToTextChunk } from "@/lib/server/sarvam"
+import {
+  SarvamApiError,
+  speechToText,
+  type SpeechToTextChunk,
+} from "@/lib/server/sarvam"
 import type { TranscriptSegment } from "@/lib/leads-store"
 
 const AUDIO_DIR = path.join(process.cwd(), "data", "lead-recordings")
@@ -13,27 +17,43 @@ const ID_PATTERN = /^[A-Za-z0-9_-]{1,120}$/
 
 function mimeFor(ext: string): string {
   switch (ext) {
-    case ".wav": return "audio/wav"
-    case ".mp3": return "audio/mpeg"
-    case ".m4a": return "audio/mp4"
-    case ".ogg": return "audio/ogg"
-    case ".flac": return "audio/flac"
-    case ".webm": return "audio/webm"
-    default: return "application/octet-stream"
+    case ".wav":
+      return "audio/wav"
+    case ".mp3":
+      return "audio/mpeg"
+    case ".m4a":
+      return "audio/mp4"
+    case ".ogg":
+      return "audio/ogg"
+    case ".flac":
+      return "audio/flac"
+    case ".webm":
+      return "audio/webm"
+    default:
+      return "application/octet-stream"
   }
 }
 
-function buildSegments(chunks: SpeechToTextChunk[], fallbackText: string): TranscriptSegment[] {
+function buildSegments(
+  chunks: SpeechToTextChunk[],
+  fallbackText: string
+): TranscriptSegment[] {
   if (chunks.length === 0) {
     const text = fallbackText.trim()
-    return text ? [{ id: "seg-0", speaker: "customer", text, startMs: 0, endMs: 0 }] : []
+    return text
+      ? [{ id: "seg-0", speaker: "customer", text, startMs: 0, endMs: 0 }]
+      : []
   }
   const segments: TranscriptSegment[] = []
   let buffer: SpeechToTextChunk[] = []
 
   const flush = () => {
     if (buffer.length === 0) return
-    const text = buffer.map((c) => c.text).join(" ").replace(/\s+/g, " ").trim()
+    const text = buffer
+      .map((c) => c.text)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim()
     if (!text) {
       buffer = []
       return
@@ -51,7 +71,10 @@ function buildSegments(chunks: SpeechToTextChunk[], fallbackText: string): Trans
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i]
     buffer.push(chunk)
-    const accumulated = buffer.map((c) => c.text).join(" ").trim()
+    const accumulated = buffer
+      .map((c) => c.text)
+      .join(" ")
+      .trim()
     const next = chunks[i + 1]
     if (
       /[.!?]…?$/.test(accumulated) ||
@@ -79,7 +102,10 @@ export async function POST(
   try {
     form = await request.formData()
   } catch {
-    return NextResponse.json({ error: "Expected a multipart form body." }, { status: 400 })
+    return NextResponse.json(
+      { error: "Expected a multipart form body." },
+      { status: 400 }
+    )
   }
 
   const file = form.get("file")
@@ -93,14 +119,19 @@ export async function POST(
   const ext = path.extname(file.name || "recording.wav").toLowerCase()
   if (!ALLOWED_EXT.has(ext)) {
     return NextResponse.json(
-      { error: `Unsupported file type "${ext}". Use wav, mp3, m4a, ogg, flac or webm.` },
+      {
+        error: `Unsupported file type "${ext}". Use wav, mp3, m4a, ogg, flac or webm.`,
+      },
       { status: 415 }
     )
   }
 
   const audio = Buffer.from(await file.arrayBuffer())
   if (audio.byteLength === 0) {
-    return NextResponse.json({ error: "The uploaded file is empty." }, { status: 400 })
+    return NextResponse.json(
+      { error: "The uploaded file is empty." },
+      { status: 400 }
+    )
   }
 
   const mime = file.type || mimeFor(ext)
@@ -126,7 +157,9 @@ export async function POST(
       )
     }
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Transcription failed." },
+      {
+        error: error instanceof Error ? error.message : "Transcription failed.",
+      },
       { status: 500 }
     )
   }
@@ -167,7 +200,9 @@ export async function GET(
   }
 
   try {
-    const buffer = await fs.promises.readFile(path.join(AUDIO_DIR, rec.filename))
+    const buffer = await fs.promises.readFile(
+      path.join(AUDIO_DIR, rec.filename)
+    )
     return new Response(new Uint8Array(buffer as Buffer), {
       headers: {
         "Content-Type": rec.mime,

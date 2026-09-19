@@ -1,7 +1,18 @@
 "use client"
 
 import type { ColumnDef } from "@tanstack/react-table"
-import { BarChart3Icon, Grid2X2Icon, LinkIcon, MailIcon, Maximize2Icon, PhoneCallIcon, PlusIcon, ShieldCheckIcon, Table2Icon, WorkflowIcon } from "lucide-react"
+import {
+  BarChart3Icon,
+  Grid2X2Icon,
+  LinkIcon,
+  MailIcon,
+  Maximize2Icon,
+  PhoneCallIcon,
+  PlusIcon,
+  ShieldCheckIcon,
+  Table2Icon,
+  WorkflowIcon,
+} from "lucide-react"
 import Link from "next/link"
 import * as React from "react"
 import { toast } from "sonner"
@@ -9,16 +20,31 @@ import { toast } from "sonner"
 import { DataGrid } from "@/components/data-grid/data-grid"
 import { DataGridFilterMenu } from "@/components/data-grid/data-grid-filter-menu"
 import { DataGridKeyboardShortcuts } from "@/components/data-grid/data-grid-keyboard-shortcuts"
-import { DataGridRowDetail, type DetailRow } from "@/components/data-grid/data-grid-row-detail"
+import {
+  DataGridRowDetail,
+  type DetailRow,
+} from "@/components/data-grid/data-grid-row-detail"
 import { DataGridRowHeightMenu } from "@/components/data-grid/data-grid-row-height-menu"
 import { getDataGridSelectColumn } from "@/components/data-grid/data-grid-select-column"
 import { DataGridSortMenu } from "@/components/data-grid/data-grid-sort-menu"
 import { DataGridViewMenu } from "@/components/data-grid/data-grid-view-menu"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import {
   Sidebar,
@@ -40,7 +66,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { useCampaigns } from "@/hooks/use-campaigns"
 import { useDataGrid } from "@/hooks/use-data-grid"
-import { type UndoRedoCellUpdate, useDataGridUndoRedo } from "@/hooks/use-data-grid-undo-redo"
+import {
+  type UndoRedoCellUpdate,
+  useDataGridUndoRedo,
+} from "@/hooks/use-data-grid-undo-redo"
 import { useSheets } from "@/hooks/use-sheets"
 import type { ColumnKind } from "@/lib/api-types"
 import { getRowHeightValue } from "@/lib/data-grid"
@@ -63,14 +92,20 @@ const columnKindLabels: Record<ColumnKind, string> = {
   url: "URL",
 }
 
-function getCellOptions(kind: ColumnKind, options?: Array<{ label: string; value: string }> | null): CellOpts {
+function getCellOptions(
+  kind: ColumnKind,
+  options?: Array<{ label: string; value: string }> | null
+): CellOpts {
   if (kind === "select") return { variant: "select", options: options ?? [] }
-  if (kind === "multi-select") return { variant: "multi-select", options: options ?? [] }
+  if (kind === "multi-select")
+    return { variant: "multi-select", options: options ?? [] }
   if (kind === "number") return { variant: "number", min: 0, step: 1 }
   return { variant: kind }
 }
 
-function rowsToGridItems(rows: Array<{ id: string; values: Record<string, unknown> }>) {
+function rowsToGridItems(
+  rows: Array<{ id: string; values: Record<string, unknown> }>
+) {
   return rows.map((row) => ({ id: row.id, ...row.values }))
 }
 
@@ -105,7 +140,7 @@ function AddColumnForm({
       }}
     >
       <label className="block px-1">
-        <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <span className="mb-1 block text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
           Name
         </span>
         <input
@@ -117,16 +152,21 @@ function AddColumnForm({
         />
       </label>
       <label className="block px-1">
-        <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <span className="mb-1 block text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
           Type
         </span>
-        <Select value={kind} onValueChange={(value) => setKind(value as ColumnKind)}>
+        <Select
+          value={kind}
+          onValueChange={(value) => setKind(value as ColumnKind)}
+        >
           <SelectTrigger>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             {Object.entries(columnKindLabels).map(([value, label]) => (
-              <SelectItem key={value} value={value}>{label}</SelectItem>
+              <SelectItem key={value} value={value}>
+                {label}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -148,7 +188,9 @@ export function WorkGrid() {
   const campaignApi = useCampaigns(8)
   const [gridRows, setGridRows] = React.useState<GridItem[]>([])
   const [newSheetName, setNewSheetName] = React.useState("")
-  const [renameColumnId, setRenameColumnId] = React.useState<string | null>(null)
+  const [renameColumnId, setRenameColumnId] = React.useState<string | null>(
+    null
+  )
   const [renameColumnName, setRenameColumnName] = React.useState("")
   const [detailRowId, setDetailRowId] = React.useState<string | null>(null)
   const [gridContainerSize, setGridContainerSize] = React.useState({
@@ -158,7 +200,10 @@ export function WorkGrid() {
   const gridContainerRef = React.useRef<HTMLDivElement>(null)
 
   const activeSheet = sheetsApi.activeSheet
-  const activeColumns = React.useMemo(() => activeSheet?.columns ?? [], [activeSheet])
+  const activeColumns = React.useMemo(
+    () => activeSheet?.columns ?? [],
+    [activeSheet]
+  )
 
   React.useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -169,13 +214,16 @@ export function WorkGrid() {
     return () => window.clearTimeout(timeoutId)
   }, [activeSheet])
 
-  const pendingCampaigns = campaignApi.campaigns.filter((campaign) => campaign.active).length
+  const pendingCampaigns = campaignApi.campaigns.filter(
+    (campaign) => campaign.active
+  ).length
 
-  const { trackCellsUpdate, trackRowsAdd, trackRowsDelete } = useDataGridUndoRedo({
-    data: gridRows,
-    onDataChange: setGridRows,
-    getRowId: (row) => String(row.id),
-  })
+  const { trackCellsUpdate, trackRowsAdd, trackRowsDelete } =
+    useDataGridUndoRedo({
+      data: gridRows,
+      onDataChange: setGridRows,
+      getRowId: (row) => String(row.id),
+    })
 
   const openRenameDialog = React.useCallback(
     (columnKey: string) => {
@@ -241,7 +289,10 @@ export function WorkGrid() {
   const onDataChange = React.useCallback(
     (nextRows: GridItem[]) => {
       const updates: UndoRedoCellUpdate[] = []
-      const apiUpdates: Array<{ rowId: string; values: Record<string, unknown> }> = []
+      const apiUpdates: Array<{
+        rowId: string
+        values: Record<string, unknown>
+      }> = []
 
       for (let rowIndex = 0; rowIndex < gridRows.length; rowIndex += 1) {
         const previous = gridRows[rowIndex]
@@ -269,7 +320,9 @@ export function WorkGrid() {
       if (updates.length > 0) trackCellsUpdate(updates)
       setGridRows(nextRows)
       void sheetsApi.updateCells(apiUpdates).catch((error) => {
-        toast.error(error instanceof Error ? error.message : "Could not save cells")
+        toast.error(
+          error instanceof Error ? error.message : "Could not save cells"
+        )
         setGridRows(gridRows)
       })
     },
@@ -298,9 +351,13 @@ export function WorkGrid() {
     (rows: GridItem[]) => {
       const rowIds = rows.map((row) => String(row.id))
       trackRowsDelete(rows)
-      setGridRows((current) => current.filter((row) => !rowIds.includes(String(row.id))))
+      setGridRows((current) =>
+        current.filter((row) => !rowIds.includes(String(row.id)))
+      )
       void sheetsApi.deleteRows(rowIds).catch((error) => {
-        toast.error(error instanceof Error ? error.message : "Could not delete rows")
+        toast.error(
+          error instanceof Error ? error.message : "Could not delete rows"
+        )
         setGridRows((current) => [...current, ...rows])
       })
     },
@@ -319,7 +376,9 @@ export function WorkGrid() {
     enablePaste: true,
     enableSearch: true,
     enableSingleCellSelection: true,
-    autoFocus: activeColumns[0] ? { rowIndex: 0, columnId: activeColumns[0].key } : false,
+    autoFocus: activeColumns[0]
+      ? { rowIndex: 0, columnId: activeColumns[0].key }
+      : false,
     meta: { onColumnRename: openRenameDialog },
   })
 
@@ -368,8 +427,7 @@ export function WorkGrid() {
   const rowHeightPx = getRowHeightValue(dataGrid.rowHeight)
   const totalGridWidth = dataGrid.table.getTotalSize() + 52
   const stretchColumns = gridContainerSize.width > totalGridWidth + 8
-  const contentHeight =
-    rowHeightPx + (gridRows.length * rowHeightPx) + 36
+  const contentHeight = rowHeightPx + gridRows.length * rowHeightPx + 36
   const gridHeight =
     gridContainerSize.height > 0
       ? Math.max(220, Math.min(contentHeight, gridContainerSize.height))
@@ -398,8 +456,14 @@ export function WorkGrid() {
   }
 
   return (
-    <SidebarProvider defaultOpen className="dark min-h-svh bg-[#080808] text-sm text-foreground">
-      <Sidebar collapsible="icon" className="border-[#27272a] bg-[#0d0d0f] text-zinc-100">
+    <SidebarProvider
+      defaultOpen
+      className="dark min-h-svh bg-[#080808] text-sm text-foreground"
+    >
+      <Sidebar
+        collapsible="icon"
+        className="border-[#27272a] bg-[#0d0d0f] text-zinc-100"
+      >
         <SidebarHeader className="border-b border-[#27272a] p-3">
           <div className="flex h-9 items-center gap-2 rounded-md px-2">
             <div className="flex size-7 items-center justify-center rounded-md bg-white text-black">
@@ -407,7 +471,9 @@ export function WorkGrid() {
             </div>
             <div className="min-w-0 group-data-[collapsible=icon]:hidden">
               <div className="truncate text-sm font-semibold">Outreach OS</div>
-              <div className="truncate text-xs text-zinc-500">Dynamic workspace</div>
+              <div className="truncate text-xs text-zinc-500">
+                Dynamic workspace
+              </div>
             </div>
           </div>
         </SidebarHeader>
@@ -480,7 +546,12 @@ export function WorkGrid() {
                     className="h-8 border-[#27272a] bg-[#111113] text-white"
                   />
                 </label>
-                <Button size="sm" className="justify-start" disabled={!newSheetName.trim()} onClick={() => void createSheet()}>
+                <Button
+                  size="sm"
+                  className="justify-start"
+                  disabled={!newSheetName.trim()}
+                  onClick={() => void createSheet()}
+                >
                   <PlusIcon className="size-4" />
                   Create sheet
                 </Button>
@@ -492,7 +563,9 @@ export function WorkGrid() {
         <SidebarFooter className="border-t border-[#27272a] p-3 group-data-[collapsible=icon]:hidden">
           <div className="flex items-center justify-between text-xs text-zinc-400">
             <span>Active campaigns</span>
-            <span className="font-medium text-zinc-100">{pendingCampaigns}</span>
+            <span className="font-medium text-zinc-100">
+              {pendingCampaigns}
+            </span>
           </div>
         </SidebarFooter>
         <SidebarRail />
@@ -503,9 +576,14 @@ export function WorkGrid() {
           <SidebarTrigger className="text-zinc-300 hover:bg-[#151518] hover:text-white" />
           <Separator orientation="vertical" className="h-5 bg-[#27272a]" />
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-sm font-semibold">{activeSheet?.name ?? "Tables"}</h1>
+            <h1 className="truncate text-sm font-semibold">
+              {activeSheet?.name ?? "Tables"}
+            </h1>
           </div>
-          <Badge variant="outline" className="rounded-md border-[#34363a] bg-[#111113] text-xs text-zinc-300">
+          <Badge
+            variant="outline"
+            className="rounded-md border-[#34363a] bg-[#111113] text-xs text-zinc-300"
+          >
             {sheetsApi.saving ? "Saving" : "Saved"}
           </Badge>
         </div>
@@ -521,9 +599,16 @@ export function WorkGrid() {
               <h2 className="text-sm font-semibold">Create your first sheet</h2>
               <label className="grid gap-1.5 text-xs font-medium text-zinc-400">
                 Sheet name
-                <Input value={newSheetName} onChange={(event) => setNewSheetName(event.target.value)} className="border-[#27272a] bg-[#111113] text-white" />
+                <Input
+                  value={newSheetName}
+                  onChange={(event) => setNewSheetName(event.target.value)}
+                  className="border-[#27272a] bg-[#111113] text-white"
+                />
               </label>
-              <Button disabled={!newSheetName.trim()} onClick={() => void createSheet()}>
+              <Button
+                disabled={!newSheetName.trim()}
+                onClick={() => void createSheet()}
+              >
                 Create sheet
               </Button>
             </div>
@@ -565,7 +650,9 @@ export function WorkGrid() {
                         void addColumn(label, kind)
                           .catch((error) =>
                             toast.error(
-                              error instanceof Error ? error.message : "Could not add column"
+                              error instanceof Error
+                                ? error.message
+                                : "Could not add column"
                             )
                           )
                           .finally(close)
@@ -573,7 +660,7 @@ export function WorkGrid() {
                       onClose={close}
                     />
                   )}
-                  className="[&_[data-slot=grid]]:rounded-md [&_[data-slot=grid]]:border-[#27272a] [&_[data-slot=grid]]:bg-[#080808] [&_[data-slot=grid]]:text-white [&_[data-slot=grid-header]]:border-[#27272a] [&_[data-slot=grid-header]]:bg-[#080808] [&_[data-slot=grid-header-cell]]:border-[#27272a] [&_[data-slot=grid-header-cell]]:bg-[#080808] [&_[data-slot=grid-row]]:border-[#252527] [&_[data-slot=grid-cell]]:border-[#252527] [&_[data-slot=grid-cell-wrapper]]:px-2.5 [&_[data-slot=grid-cell-wrapper]]:py-1 [&_[data-slot=grid-cell-wrapper]]:text-[13px] [&_[data-slot=grid-cell-wrapper]]:font-medium [&_[data-slot=grid-footer]]:border-[#27272a] [&_[data-slot=grid-footer]]:bg-[#080808]"
+                  className="[&_[data-slot=grid-cell-wrapper]]:px-2.5 [&_[data-slot=grid-cell-wrapper]]:py-1 [&_[data-slot=grid-cell-wrapper]]:text-[13px] [&_[data-slot=grid-cell-wrapper]]:font-medium [&_[data-slot=grid-cell]]:border-[#252527] [&_[data-slot=grid-footer]]:border-[#27272a] [&_[data-slot=grid-footer]]:bg-[#080808] [&_[data-slot=grid-header-cell]]:border-[#27272a] [&_[data-slot=grid-header-cell]]:bg-[#080808] [&_[data-slot=grid-header]]:border-[#27272a] [&_[data-slot=grid-header]]:bg-[#080808] [&_[data-slot=grid-row]]:border-[#252527] [&_[data-slot=grid]]:rounded-md [&_[data-slot=grid]]:border-[#27272a] [&_[data-slot=grid]]:bg-[#080808] [&_[data-slot=grid]]:text-white"
                 />
               </div>
             </>
@@ -581,17 +668,43 @@ export function WorkGrid() {
         </div>
       </SidebarInset>
 
-      {activeSheet ? <DataGridKeyboardShortcuts enablePaste enableRowAdd enableRowsDelete enableSearch={!!dataGrid.searchState} enableUndoRedo /> : null}
+      {activeSheet ? (
+        <DataGridKeyboardShortcuts
+          enablePaste
+          enableRowAdd
+          enableRowsDelete
+          enableSearch={!!dataGrid.searchState}
+          enableUndoRedo
+        />
+      ) : null}
 
-      <Dialog open={renameColumnId !== null} onOpenChange={(open) => { if (!open) setRenameColumnId(null) }}>
+      <Dialog
+        open={renameColumnId !== null}
+        onOpenChange={(open) => {
+          if (!open) setRenameColumnId(null)
+        }}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Rename column</DialogTitle>
           </DialogHeader>
-          <Input value={renameColumnName} onChange={(event) => setRenameColumnName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void renameColumn() }} />
+          <Input
+            value={renameColumnName}
+            onChange={(event) => setRenameColumnName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void renameColumn()
+            }}
+          />
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRenameColumnId(null)}>Cancel</Button>
-            <Button onClick={() => void renameColumn()} disabled={!renameColumnName.trim()}>Rename</Button>
+            <Button variant="outline" onClick={() => setRenameColumnId(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void renameColumn()}
+              disabled={!renameColumnName.trim()}
+            >
+              Rename
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

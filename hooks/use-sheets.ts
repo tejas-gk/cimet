@@ -96,16 +96,51 @@ const initialDetails: SheetDetail[] = [
     0,
     [
       { key: "name", label: "Name", kind: "short-text", size: COLUMN_SIZE },
-      { key: "company", label: "Company", kind: "short-text", size: COLUMN_SIZE },
+      {
+        key: "company",
+        label: "Company",
+        kind: "short-text",
+        size: COLUMN_SIZE,
+      },
       { key: "email", label: "Email", kind: "short-text", size: COLUMN_SIZE },
-      { key: "status", label: "Status", kind: "select", size: COLUMN_SIZE, options: leadStatusOptions },
+      {
+        key: "status",
+        label: "Status",
+        kind: "select",
+        size: COLUMN_SIZE,
+        options: leadStatusOptions,
+      },
       { key: "value", label: "Value", kind: "number", size: COLUMN_SIZE },
     ],
     [
-      { name: "Alice Johnson", company: "Acme Corp", email: "alice@acme.com", status: "new", value: 25000 },
-      { name: "Bob Martinez", company: "Globex", email: "bob@globex.com", status: "contacted", value: 12000 },
-      { name: "Carol Nguyen", company: "Initech", email: "carol@initech.com", status: "qualified", value: 50000 },
-      { name: "Dave Patel", company: "Umbrella", email: "dave@umbrella.com", status: "unqualified", value: 8000 },
+      {
+        name: "Alice Johnson",
+        company: "Acme Corp",
+        email: "alice@acme.com",
+        status: "new",
+        value: 25000,
+      },
+      {
+        name: "Bob Martinez",
+        company: "Globex",
+        email: "bob@globex.com",
+        status: "contacted",
+        value: 12000,
+      },
+      {
+        name: "Carol Nguyen",
+        company: "Initech",
+        email: "carol@initech.com",
+        status: "qualified",
+        value: 50000,
+      },
+      {
+        name: "Dave Patel",
+        company: "Umbrella",
+        email: "dave@umbrella.com",
+        status: "unqualified",
+        value: 8000,
+      },
     ]
   ),
   buildSheet(
@@ -113,9 +148,26 @@ const initialDetails: SheetDetail[] = [
     "Outreach",
     1,
     [
-      { key: "contact", label: "Contact", kind: "short-text", size: COLUMN_SIZE },
-      { key: "channel", label: "Channel", kind: "select", size: COLUMN_SIZE, options: channelOptions },
-      { key: "status", label: "Status", kind: "select", size: COLUMN_SIZE, options: outreachStatusOptions },
+      {
+        key: "contact",
+        label: "Contact",
+        kind: "short-text",
+        size: COLUMN_SIZE,
+      },
+      {
+        key: "channel",
+        label: "Channel",
+        kind: "select",
+        size: COLUMN_SIZE,
+        options: channelOptions,
+      },
+      {
+        key: "status",
+        label: "Status",
+        kind: "select",
+        size: COLUMN_SIZE,
+        options: outreachStatusOptions,
+      },
     ],
     [
       { contact: "Alice Johnson", channel: "email", status: "sent" },
@@ -183,9 +235,7 @@ export function useSheets() {
         )
         const data = sheet.rows.data.map((row) => {
           const values = valuesById.get(row.id)
-          return values
-            ? { ...row, values: { ...row.values, ...values } }
-            : row
+          return values ? { ...row, values: { ...row.values, ...values } } : row
         })
         return { ...sheet, rows: { ...sheet.rows, data } }
       })

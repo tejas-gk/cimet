@@ -43,8 +43,12 @@ export function inspectWav(buffer: Buffer): WavInfo {
 }
 
 export function silence(sampleRate: number, seconds: number): Buffer {
-  if (sampleRate % 2 !== 0) throw new Error("sampleRate must be even for WAV alignment")
-  return buildWav(sampleRate, Buffer.alloc(Math.round(sampleRate * 2 * seconds)))
+  if (sampleRate % 2 !== 0)
+    throw new Error("sampleRate must be even for WAV alignment")
+  return buildWav(
+    sampleRate,
+    Buffer.alloc(Math.round(sampleRate * 2 * seconds))
+  )
 }
 
 /**
@@ -168,8 +172,14 @@ export function trimWav(buffer: Buffer, threshold = 0.015, padMs = 40): Buffer {
   if (endFrame < startFrame) return buffer
 
   const padBytes = Math.round((info.sampleRate * bytesPerSample * padMs) / 1000)
-  const startByte = Math.max(info.pcmOffset, info.pcmOffset + startFrame * winBytes - padBytes)
-  const endByte = Math.min(buffer.length, info.pcmOffset + (endFrame + 1) * winBytes + padBytes)
+  const startByte = Math.max(
+    info.pcmOffset,
+    info.pcmOffset + startFrame * winBytes - padBytes
+  )
+  const endByte = Math.min(
+    buffer.length,
+    info.pcmOffset + (endFrame + 1) * winBytes + padBytes
+  )
   const pcm = buffer.subarray(startByte, endByte)
   return buildWav(info.sampleRate, pcm)
 }

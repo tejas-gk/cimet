@@ -1,10 +1,13 @@
 export type ProviderMode = "mock" | "external"
 
-export type VoiceProviderId = "mock" | "sarvam" | "vapi" | "twilio-realtime" | "livekit"
-export type TranscriptionProviderId = "mock" | "deepgram" | "assemblyai" | "whisper-local"
+export type VoiceProviderId =
+  "mock" | "sarvam" | "vapi" | "twilio-realtime" | "livekit"
+export type TranscriptionProviderId =
+  "mock" | "deepgram" | "assemblyai" | "whisper-local"
 export type LlmProviderId = "mock" | "openai" | "gemini" | "ollama"
 
-export type EnergyJourneyStatus = "dropped" | "calling" | "handoff" | "completed" | "declined"
+export type EnergyJourneyStatus =
+  "dropped" | "calling" | "handoff" | "completed" | "declined"
 
 export type EnergyJourneyField = {
   key: string
@@ -127,7 +130,11 @@ export type PlatformProviderConfig = {
   transcription: {
     active: TranscriptionProviderId
     mode: ProviderMode
-    freeOptions: Array<{ id: TranscriptionProviderId; label: string; note: string }>
+    freeOptions: Array<{
+      id: TranscriptionProviderId
+      label: string
+      note: string
+    }>
   }
   llm: {
     active: LlmProviderId

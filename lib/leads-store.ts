@@ -46,12 +46,33 @@ export type Lead = {
 
 export const STORAGE_KEY = "cimet-leads-v3"
 export const LEADS_CHANGED_EVENT = "cimet:leads-changed"
+export const AUTO_CALL_KEY = "cimet-auto-call"
+export const AUTO_DIALED_KEY = "cimet-auto-dialed-leads"
 
-export const ENERGY_STATES = ["NSW", "VIC", "QLD", "SA", "WA", "TAS", "ACT", "NT"]
+export const ENERGY_STATES = [
+  "NSW",
+  "VIC",
+  "QLD",
+  "SA",
+  "WA",
+  "TAS",
+  "ACT",
+  "NT",
+]
 export const RETAILERS = ["EnergyAustralia", "AGL", "Origin"]
-export const ENERGY_PLANS = ["Standard plan", "Fixed 12-month", "Solar buy-back", "Broadband bundle"]
+export const ENERGY_PLANS = [
+  "Standard plan",
+  "Fixed 12-month",
+  "Solar buy-back",
+  "Broadband bundle",
+]
 export const FUEL_TYPES = ["Electricity", "Gas"]
-export const USAGE_TIERS = ["Under $150 / month", "$150 - $300 / month", "$300 - $600 / month", "Over $600 / month"]
+export const USAGE_TIERS = [
+  "Under $150 / month",
+  "$150 - $300 / month",
+  "$300 - $600 / month",
+  "Over $600 / month",
+]
 export const YES_NO = [
   { value: "yes", label: "Yes" },
   { value: "no", label: "No" },
@@ -96,20 +117,54 @@ export function emptyLead(): Lead {
   }
 }
 
-const progressFields: Array<keyof Pick<
-  Lead,
-  | "name" | "email" | "phone" | "company" | "state" | "retailer" | "plan"
-  | "usage" | "message" | "address" | "postcode" | "dob" | "fuelType"
-  | "nmiMirn" | "concession" | "lifeSupport" | "moveInDate"
->> = [
-  "name", "email", "phone", "company", "state", "retailer", "plan", "usage",
-  "message", "address", "postcode", "dob", "fuelType", "nmiMirn",
-  "concession", "lifeSupport", "moveInDate",
+const progressFields: Array<
+  keyof Pick<
+    Lead,
+    | "name"
+    | "email"
+    | "phone"
+    | "company"
+    | "state"
+    | "retailer"
+    | "plan"
+    | "usage"
+    | "message"
+    | "address"
+    | "postcode"
+    | "dob"
+    | "fuelType"
+    | "nmiMirn"
+    | "concession"
+    | "lifeSupport"
+    | "moveInDate"
+  >
+> = [
+  "name",
+  "email",
+  "phone",
+  "company",
+  "state",
+  "retailer",
+  "plan",
+  "usage",
+  "message",
+  "address",
+  "postcode",
+  "dob",
+  "fuelType",
+  "nmiMirn",
+  "concession",
+  "lifeSupport",
+  "moveInDate",
 ]
 
-export function leadProgress(lead: Pick<Lead, (typeof progressFields)[number]>) {
+export function leadProgress(
+  lead: Pick<Lead, (typeof progressFields)[number]>
+) {
   const values = progressFields.map((field) => lead[field])
-  const filled = values.filter((value) => String(value ?? "").trim().length > 0).length
+  const filled = values.filter(
+    (value) => String(value ?? "").trim().length > 0
+  ).length
   return Math.round((filled / values.length) * 100)
 }
 
@@ -139,4 +194,44 @@ export function saveLeads(leads: Lead[]) {
   if (typeof window === "undefined") return
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(leads))
   window.dispatchEvent(new CustomEvent(LEADS_CHANGED_EVENT))
+}
+
+export function loadAutoCall(): boolean {
+  if (typeof window === "undefined") return false
+  try {
+    return window.localStorage.getItem(AUTO_CALL_KEY) === "1"
+  } catch {
+    return false
+  }
+}
+
+export function saveAutoCall(enabled: boolean) {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.setItem(AUTO_CALL_KEY, enabled ? "1" : "0")
+  } catch {
+    // ignore
+  }
+}
+
+export function loadAutoDialedLeadIds(): string[] {
+  if (typeof window === "undefined") return []
+  try {
+    const raw = window.localStorage.getItem(AUTO_DIALED_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === "string")
+      : []
+  } catch {
+    return []
+  }
+}
+
+export function saveAutoDialedLeadIds(ids: string[]) {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.setItem(AUTO_DIALED_KEY, JSON.stringify(ids))
+  } catch {
+    // ignore
+  }
 }

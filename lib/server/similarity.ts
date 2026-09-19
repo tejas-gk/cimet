@@ -49,8 +49,8 @@ function tokenRecall(expected: string[], candidate: string[]): number {
   if (expected.length === 0) return 1
   const counts = countTokens(candidate)
   const covered = expected.reduce(
-    (sum, token) => sum + (counts.get(token) ?? 0 > 0 ? 1 : 0),
-    0,
+    (sum, token) => sum + ((counts.get(token) ?? 0 > 0) ? 1 : 0),
+    0
   )
   return covered / expected.length
 }
@@ -126,7 +126,10 @@ export function normalizeAddress(input: string): string {
  * Normalize a value to a canonical comparable form.
  * Returns null if the input is empty / unparseable.
  */
-export function normalizeValue(kind: NormalizeKind, input: string): string | null {
+export function normalizeValue(
+  kind: NormalizeKind,
+  input: string
+): string | null {
   const raw = String(input ?? "").trim()
   if (!raw) return null
 
@@ -168,7 +171,7 @@ export function normalizeValue(kind: NormalizeKind, input: string): string | nul
 export function valuesMatch(
   kind: NormalizeKind,
   spoken: string,
-  expected: string,
+  expected: string
 ): boolean {
   if (kind === "address") {
     const sim = phraseSimilarity(expected, spoken)

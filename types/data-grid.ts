@@ -237,12 +237,7 @@ export type DateFilterOperator =
   | "isNotEmpty"
 
 export type SelectFilterOperator =
-  | "is"
-  | "isNot"
-  | "isAnyOf"
-  | "isNoneOf"
-  | "isEmpty"
-  | "isNotEmpty"
+  "is" | "isNot" | "isAnyOf" | "isNoneOf" | "isEmpty" | "isNotEmpty"
 
 export type BooleanFilterOperator = "isTrue" | "isFalse"
 

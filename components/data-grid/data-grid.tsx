@@ -281,7 +281,10 @@ export function DataGrid<TData>({
                     onDrop={(event) => onColumnDrop(header.column.id, event)}
                     onDragEnd={onColumnDragEnd}
                     className={cn("relative", {
-                      grow: stretchColumns && header.column.id !== "select" && !header.column.getIsPinned(),
+                      grow:
+                        stretchColumns &&
+                        header.column.id !== "select" &&
+                        !header.column.getIsPinned(),
                       "border-e":
                         showEndBorder && header.column.id !== "select",
                       "border-s":
@@ -343,7 +346,9 @@ export function DataGrid<TData>({
                         sideOffset={8}
                         className="w-72 p-0"
                       >
-                        {addColumnEditor({ close: () => setAddColumnOpen(false) })}
+                        {addColumnEditor({
+                          close: () => setAddColumnOpen(false),
+                        })}
                       </PopoverContent>
                     </Popover>
                   ) : (
@@ -417,17 +422,17 @@ export function DataGrid<TData>({
             ref={footerRef}
             className="sticky bottom-0 z-10 grid border-t bg-background"
           >
-<div
-                role="row"
-                aria-rowindex={rows.length + 2}
-                data-slot="grid-add-row"
-                tabIndex={-1}
-                className="flex"
-                style={{
-                  width: "100%",
-                  minWidth: totalTableWidth + addColumnWidth,
-                }}
-              >
+            <div
+              role="row"
+              aria-rowindex={rows.length + 2}
+              data-slot="grid-add-row"
+              tabIndex={-1}
+              className="flex"
+              style={{
+                width: "100%",
+                minWidth: totalTableWidth + addColumnWidth,
+              }}
+            >
               <div
                 role="gridcell"
                 tabIndex={0}

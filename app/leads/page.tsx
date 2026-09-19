@@ -45,6 +45,10 @@ import { useLeads } from "@/hooks/use-leads"
 import { formatMs } from "@/lib/cimet-demo-data"
 import {
   leadProgress,
+  loadAutoCall,
+  loadAutoDialedLeadIds,
+  saveAutoCall,
+  saveAutoDialedLeadIds,
   type Lead,
   type QaStatus,
   type TranscriptSegment,
@@ -95,6 +99,15 @@ export default function LeadsPage() {
     kind: "ok" | "error"
     message: string
   } | null>(null)
+  const [autoCall, setAutoCall] = React.useState<boolean>(() => loadAutoCall())
+  const autoDialedRef = React.useRef<Set<string>>(
+    new Set(loadAutoDialedLeadIds())
+  )
+  const autoProcessingRef = React.useRef(false)
+  const leadsRef = React.useRef(leads)
+  React.useEffect(() => {
+    leadsRef.current = leads
+  }, [leads])
 
   const sorted = React.useMemo(
     () => [...leads].sort((a, b) => b.updatedAt - a.updatedAt),
@@ -148,9 +161,15 @@ export default function LeadsPage() {
 
   const providerFor = (leadId: string) => providerByLead[leadId] ?? "twilio"
 
-  async function handleDial(lead: Lead) {
-    setDialing(lead.id)
-    setDialState(null)
+  const markDialed = React.useCallback((leadId: string) => {
+    autoDialedRef.current.add(leadId)
+    saveAutoDialedLeadIds([...autoDialedRef.current])
+  }, [])
+
+  async function runDial(lead: Lead): Promise<{
+    ok: boolean
+    message: string
+  }> {
     try {
       const res = await fetch(
         `/api/leads/${encodeURIComponent(lead.id)}/phone`,
@@ -184,24 +203,65 @@ export default function LeadsPage() {
       if (!res.ok) {
         throw new Error(data?.error ?? `Call failed (${res.status})`)
       }
-      setDialState({
-        leadId: lead.id,
-        kind: "ok",
+      return {
+        ok: true,
         message: `Calling ${lead.phone} via ${providerFor(lead.id)} — the finished call will be audited automatically.`,
-      })
+      }
     } catch (error) {
-      setDialState({
-        leadId: lead.id,
-        kind: "error",
+      return {
+        ok: false,
         message:
           error instanceof Error
             ? error.message
             : "Failed to start the phone call.",
-      })
-    } finally {
-      setDialing(null)
+      }
     }
   }
+
+  async function handleDial(lead: Lead) {
+    setDialing(lead.id)
+    setDialState(null)
+    const result = await runDial(lead)
+    markDialed(lead.id)
+    setDialState({
+      leadId: lead.id,
+      kind: result.ok ? "ok" : "error",
+      message: result.message,
+    })
+    setDialing(null)
+  }
+
+  // Auto-call: whenever the toggle is on, dial any submitted lead with a phone
+  // number that has not been dialed yet, oldest first, one at a time.
+  React.useEffect(() => {
+    if (!autoCall) return
+    if (autoProcessingRef.current) return
+    void (async () => {
+      autoProcessingRef.current = true
+      try {
+        for (;;) {
+          const next = [...leadsRef.current]
+            .filter(
+              (lead) =>
+                lead.submitted &&
+                !!lead.phone &&
+                !autoDialedRef.current.has(lead.id)
+            )
+            .sort((a, b) => a.createdAt - b.createdAt)[0]
+          if (!next) break
+          const result = await runDial(next)
+          markDialed(next.id)
+          setDialState({
+            leadId: next.id,
+            kind: result.ok ? "ok" : "error",
+            message: result.message,
+          })
+        }
+      } finally {
+        autoProcessingRef.current = false
+      }
+    })()
+  }, [autoCall, leads, runDial, markDialed])
 
   async function runQualityAudit() {
     if (!selected || !selected.recordingUrl) return
@@ -298,11 +358,39 @@ export default function LeadsPage() {
               {draftCount} in progress
             </Badge>
           </div>
-          <Button size="sm" asChild>
-            <Link href="/lead-form">
-              <ClipboardPlusIcon className="size-4" /> New lead
-            </Link>
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              title="When on, every newly submitted lead with a phone number is dialed automatically."
+              className={
+                autoCall
+                  ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-100"
+                  : "border-[#34363a] bg-[#111113] text-zinc-300"
+              }
+              onClick={() => {
+                const next = !autoCall
+                setAutoCall(next)
+                saveAutoCall(next)
+              }}
+            >
+              <PhoneIcon className="size-4" /> Auto call
+              <span
+                className={`ml-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                  autoCall
+                    ? "bg-emerald-500/20 text-emerald-100"
+                    : "bg-[#222226] text-zinc-500"
+                }`}
+              >
+                {autoCall ? "ON" : "OFF"}
+              </span>
+            </Button>
+            <Button size="sm" asChild>
+              <Link href="/lead-form">
+                <ClipboardPlusIcon className="size-4" /> New lead
+              </Link>
+            </Button>
+          </div>
         </div>
 
         {sorted.length === 0 ? (

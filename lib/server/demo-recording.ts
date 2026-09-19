@@ -29,7 +29,10 @@ export type DemoScenario = {
   customerEmail: string
   description: string
   /** CRM / plan facts the auditor cross-checks the spoken values against. */
-  facts: Omit<AuditLeadFacts, "leadName" | "agentName" | "retailer" | "customerEmail">
+  facts: Omit<
+    AuditLeadFacts,
+    "leadName" | "agentName" | "retailer" | "customerEmail"
+  >
   script: ScenarioLine[]
 }
 
@@ -43,7 +46,8 @@ export const demoScenarios: DemoScenario[] = [
     leadName: "Bob Martinez",
     agentName: "Leo Chen",
     customerEmail: "bob.martinez@gmail.com",
-    description: "Fully compliant call: disclaimer, correct peak rate (30.2c), email, address, concession and life-support. Expect auto-pass.",
+    description:
+      "Fully compliant call: disclaimer, correct peak rate (30.2c), email, address, concession and life-support. Expect auto-pass.",
     facts: {
       address: "42 Marine Parade, Bondi",
       postcode: "2026",
@@ -51,11 +55,26 @@ export const demoScenarios: DemoScenario[] = [
       lifeSupport: "no",
     },
     script: [
-      { who: "agent", text: "Leo from CIMET. This call is recorded for quality and compliance." },
-      { who: "agent", text: "Your peak electricity rate is thirty point two cents per kilowatt hour." },
-      { who: "agent", text: "Your email, bob dot martinez at gmail dot com, and address 42 Marine Parade, Bondi, postcode 2026." },
-      { who: "agent", text: "Any concession card or life support at that address?" },
-      { who: "customer", text: "No concession, no life support. Yes, the address is correct." },
+      {
+        who: "agent",
+        text: "Leo from CIMET. This call is recorded for quality and compliance.",
+      },
+      {
+        who: "agent",
+        text: "Your peak electricity rate is thirty point two cents per kilowatt hour.",
+      },
+      {
+        who: "agent",
+        text: "Your email, bob dot martinez at gmail dot com, and address 42 Marine Parade, Bondi, postcode 2026.",
+      },
+      {
+        who: "agent",
+        text: "Any concession card or life support at that address?",
+      },
+      {
+        who: "customer",
+        text: "No concession, no life support. Yes, the address is correct.",
+      },
     ],
   },
   {
@@ -64,17 +83,30 @@ export const demoScenarios: DemoScenario[] = [
     leadName: "Alice Johnson",
     agentName: "Mia Patel",
     customerEmail: "alice@acme.com",
-    description: "Agent states a peak rate (28.6c) below the retailer source-of-truth (31.9c). Expect a hold.",
+    description:
+      "Agent states a peak rate (28.6c) below the retailer source-of-truth (31.9c). Expect a hold.",
     facts: {
       nmiMirn: "4102001234",
       fuelType: "electricity",
       concession: "no",
     },
     script: [
-      { who: "agent", text: "Mia from CIMET, call recorded for quality and compliance." },
-      { who: "agent", text: "Your peak electricity rate is twenty eight point six cents per kilowatt hour." },
-      { who: "agent", text: "Your NMI is 4102001234, email alice at acme dot com. Concession card?" },
-      { who: "customer", text: "My email is alice at acme dot com and no concession card." },
+      {
+        who: "agent",
+        text: "Mia from CIMET, call recorded for quality and compliance.",
+      },
+      {
+        who: "agent",
+        text: "Your peak electricity rate is twenty eight point six cents per kilowatt hour.",
+      },
+      {
+        who: "agent",
+        text: "Your NMI is 4102001234, email alice at acme dot com. Concession card?",
+      },
+      {
+        who: "customer",
+        text: "My email is alice at acme dot com and no concession card.",
+      },
     ],
   },
   {
@@ -83,17 +115,30 @@ export const demoScenarios: DemoScenario[] = [
     leadName: "David Chen",
     agentName: "Ava Singh",
     customerEmail: "david.chen@gmail.com",
-    description: "Rate is correct but the customer verbally confirms a different email than the CRM (and the concession disclosure is skipped). Expect a hold.",
+    description:
+      "Rate is correct but the customer verbally confirms a different email than the CRM (and the concession disclosure is skipped). Expect a hold.",
     facts: {
       address: "7 Collins Street, Melbourne",
       postcode: "3000",
       concession: "no",
     },
     script: [
-      { who: "agent", text: "Ava from CIMET, call recorded for quality and compliance." },
-      { who: "agent", text: "Your peak rate is twenty nine point eight cents per kilowatt hour on Origin." },
-      { who: "agent", text: "Confirm your email and address 7 Collins Street, Melbourne 3000?" },
-      { who: "customer", text: "My email is david dot chen at outlook dot com. And 7 Collins Street is my address." },
+      {
+        who: "agent",
+        text: "Ava from CIMET, call recorded for quality and compliance.",
+      },
+      {
+        who: "agent",
+        text: "Your peak rate is twenty nine point eight cents per kilowatt hour on Origin.",
+      },
+      {
+        who: "agent",
+        text: "Confirm your email and address 7 Collins Street, Melbourne 3000?",
+      },
+      {
+        who: "customer",
+        text: "My email is david dot chen at outlook dot com. And 7 Collins Street is my address.",
+      },
     ],
   },
   {
@@ -102,17 +147,27 @@ export const demoScenarios: DemoScenario[] = [
     leadName: "Priya Nair",
     agentName: "Rahul Verma",
     customerEmail: "priya.nair@gmail.com",
-    description: "Compliant vessel but the peak rate and move-in date are never discussed. Expect human review.",
+    description:
+      "Compliant vessel but the peak rate and move-in date are never discussed. Expect human review.",
     facts: {
       concession: "no",
       moveInDate: "2026-11-01",
     },
     script: [
-      { who: "agent", text: "Rahul from CIMET. This call is recorded for quality and compliance." },
-      { who: "agent", text: "I have you on Origin electricity, and your email is priya dot nair at gmail dot com." },
+      {
+        who: "agent",
+        text: "Rahul from CIMET. This call is recorded for quality and compliance.",
+      },
+      {
+        who: "agent",
+        text: "I have you on Origin electricity, and your email is priya dot nair at gmail dot com.",
+      },
       { who: "agent", text: "Do you hold a concession card?" },
       { who: "customer", text: "No concession card." },
-      { who: "agent", text: "Great, I will send the proposal to your email today, thanks Priya." },
+      {
+        who: "agent",
+        text: "Great, I will send the proposal to your email today, thanks Priya.",
+      },
     ],
   },
 ]

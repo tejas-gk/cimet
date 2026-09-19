@@ -17,11 +17,31 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useCimetAi } from "@/hooks/use-cimet-ai"
+import type { AuditRun } from "@/lib/cimet-ai-types"
 
 function decisionClass(status: string) {
   if (status === "auto-pass") return "border-emerald-500/40 text-emerald-300"
   if (status === "hold") return "border-red-500/40 text-red-300"
   return "border-amber-500/40 text-amber-300"
+}
+
+function filterAudits(
+  audits: AuditRun[],
+  searchQuery: string,
+  selectedStatus: string | undefined,
+  selectedRetailer: string
+) {
+  return audits.filter((audit) => {
+    const matchesSearch =
+      audit.leadName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      audit.agentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      audit.retailer.toLowerCase().includes(searchQuery.toLowerCase())
+    const matchesStatus = selectedStatus
+      ? audit.status === selectedStatus
+      : true
+    const matchesRetailer = audit.retailer === selectedRetailer
+    return matchesSearch && matchesStatus && matchesRetailer
+  })
 }
 
 function decisionIcon(status: string) {
@@ -40,6 +60,18 @@ export default function AuditorPage() {
   const [agentName, setAgentName] = React.useState("")
   const [leadName, setLeadName] = React.useState("")
   const [customerEmail, setCustomerEmail] = React.useState("")
+  const [searchQuery, setSearchQuery] = React.useState("")
+  const [selectedStatus, setSelectedStatus] = React.useState<
+    string | undefined
+  >(undefined)
+  const fileInput = React.useRef<HTMLInputElement>(null)
+
+  const filteredAudits = filterAudits(
+    audits,
+    searchQuery,
+    selectedStatus,
+    retailer
+  )
 
   const handleUpload = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -92,6 +124,47 @@ export default function AuditorPage() {
           <Metric label="Human reviews" value={dashboard.review} />
         </div>
 
+        <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-2">
+            <label className="text-xs text-zinc-500">
+              Search
+              <Input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search lead name, agent, or retailer"
+                className="border-[#27272a] bg-[#111113] text-white"
+              />
+            </label>
+            <label className="grid gap-1 text-xs text-zinc-500">
+              Status
+              <select
+                value={selectedStatus}
+                onChange={(event) => setSelectedStatus(event.target.value)}
+                className="rounded-md border border-[#27272a] bg-[#111113] px-3 py-1.5 text-sm text-white"
+              >
+                <option value="">All</option>
+                <option value="auto-pass">Auto-pass</option>
+                <option value="hold">Hold</option>
+                <option value="human-review">Human review</option>
+              </select>
+            </label>
+          </div>
+          <div className="grid gap-2">
+            <label className="text-xs text-zinc-500">
+              Retailer
+              <select
+                value={retailer}
+                onChange={(event) => setRetailer(event.target.value)}
+                className="rounded-md border border-[#27272a] bg-[#111113] px-3 py-1.5 text-sm text-white"
+              >
+                <option>EnergyAustralia</option>
+                <option>AGL</option>
+                <option>Origin</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
         <div className="grid gap-5 lg:grid-cols-2">
           <form
             onSubmit={handleUpload}
@@ -103,15 +176,30 @@ export default function AuditorPage() {
               30s).
             </p>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <label className="grid gap-1 text-xs text-zinc-500">
-                Audio file
+              <div
+                className="cursor-pointer rounded-lg border border-[#27272a] bg-[#111113] p-4 transition-colors hover:border-sky-500/40"
+                onClick={() => fileInput.current?.click()}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) =>
+                  e.key === "Enter" && fileInput.current?.click()
+                }
+              >
+                <div className="text-xs text-zinc-500">
+                  Drag & drop or browse audio file
+                </div>
+                <p className="mt-1 text-xs text-zinc-400">
+                  WAV/MP3/M4A/OGG under 30s
+                </p>
                 <input
+                  ref={fileInput}
                   type="file"
                   accept="audio/*,.wav,.mp3,.m4a,.ogg"
                   onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                  style={{ display: "none" }}
                   className="rounded-lg border border-[#27272a] bg-[#111113] p-2 text-xs text-zinc-300 file:mr-2 file:rounded file:border-0 file:bg-white file:text-black"
                 />
-              </label>
+              </div>
               <label className="grid gap-1 text-xs text-zinc-500">
                 Lead name
                 <Input
@@ -184,12 +272,12 @@ export default function AuditorPage() {
         ) : null}
 
         <div className="overflow-hidden rounded-xl border border-[#27272a] bg-[#0b0b0c]">
-          {audits.length === 0 ? (
+          {filteredAudits.length === 0 ? (
             <div className="p-6 text-sm text-zinc-500">
               No audits yet. Upload a recording or complete a voice-agent call.
             </div>
           ) : null}
-          {audits.map((audit) => {
+          {filteredAudits.map((audit) => {
             const failures = audit.checks.filter(
               (check) => check.verdict === "fail"
             ).length

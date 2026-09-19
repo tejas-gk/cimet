@@ -191,12 +191,18 @@ function migrate(db: DatabaseSync) {
   `)
 
   // Soft-migrate databases created before repeat_count existed.
-  const callColumns = db.prepare("PRAGMA table_info(calls)").all() as Array<{ name: string }>
+  const callColumns = db.prepare("PRAGMA table_info(calls)").all() as Array<{
+    name: string
+  }>
   if (!callColumns.some((c) => c.name === "repeat_count")) {
-    db.exec("ALTER TABLE calls ADD COLUMN repeat_count INTEGER NOT NULL DEFAULT 0")
+    db.exec(
+      "ALTER TABLE calls ADD COLUMN repeat_count INTEGER NOT NULL DEFAULT 0"
+    )
   }
 
-  const auditColumns = db.prepare("PRAGMA table_info(audits)").all() as Array<{ name: string }>
+  const auditColumns = db.prepare("PRAGMA table_info(audits)").all() as Array<{
+    name: string
+  }>
   if (!auditColumns.some((c) => c.name === "lead_id")) {
     db.exec("ALTER TABLE audits ADD COLUMN lead_id TEXT")
   }
@@ -322,7 +328,9 @@ function mapField(r: Record<string, SQLOutputValue>): EnergyJourneyField {
     label: requireStr(r.label, "label"),
     value: r.value == null ? null : String(r.value),
     required: Number(r.required) === 1,
-    ...(r.collected_by ? { collectedBy: r.collected_by as "customer" | "ai" | "agent" } : {}),
+    ...(r.collected_by
+      ? { collectedBy: r.collected_by as "customer" | "ai" | "agent" }
+      : {}),
   }
 }
 
@@ -395,7 +403,9 @@ export function listJourneys(db: DatabaseSync): EnergyJourney[] {
     db.prepare("SELECT * FROM journeys ORDER BY created_at, id").all()
   )
   const fields = rows<Record<string, SQLOutputValue>>(
-    db.prepare("SELECT * FROM journey_fields ORDER BY journey_id, position").all()
+    db
+      .prepare("SELECT * FROM journey_fields ORDER BY journey_id, position")
+      .all()
   )
   const fieldsByJourney = new Map<string, EnergyJourneyField[]>()
   for (const fr of fields) {
@@ -419,7 +429,9 @@ export function getJourney(
   if (!r) return null
   const fields = rows<Record<string, SQLOutputValue>>(
     db
-      .prepare("SELECT * FROM journey_fields WHERE journey_id = ? ORDER BY position")
+      .prepare(
+        "SELECT * FROM journey_fields WHERE journey_id = ? ORDER BY position"
+      )
       .all(journeyId)
   ).map(mapField)
   return mapJourney(r, fields)
@@ -466,7 +478,9 @@ function getUtterancesByCall(
   const ph = callIds.map(() => "?").join(",")
   const allUtterances = rows<Record<string, SQLOutputValue>>(
     db
-      .prepare(`SELECT * FROM utterances WHERE call_id IN (${ph}) ORDER BY call_id, start_ms, id`)
+      .prepare(
+        `SELECT * FROM utterances WHERE call_id IN (${ph}) ORDER BY call_id, start_ms, id`
+      )
       .all(...callIds)
   )
   const map = new Map<string, Utterance[]>()
@@ -486,7 +500,9 @@ function getHandoffsByCall(
   if (callIds.length === 0) return new Map()
   const ph = callIds.map(() => "?").join(",")
   const handoffRows = rows<Record<string, SQLOutputValue>>(
-    db.prepare(`SELECT * FROM handoffs WHERE call_id IN (${ph})`).all(...callIds)
+    db
+      .prepare(`SELECT * FROM handoffs WHERE call_id IN (${ph})`)
+      .all(...callIds)
   )
   const map = new Map<string, HandoffContext>()
   for (const r of handoffRows) {
@@ -513,7 +529,11 @@ export function listAudits(db: DatabaseSync): AuditRun[] {
       leadName: requireStr(r.lead_name, "lead_name"),
       agentName: requireStr(r.agent_name, "agent_name"),
       retailer: requireStr(r.retailer, "retailer"),
-      ...(r.recording_path ? { recordingUrl: `/api/recordings/${encodeURIComponent(String(r.recording_path))}` } : {}),
+      ...(r.recording_path
+        ? {
+            recordingUrl: `/api/recordings/${encodeURIComponent(String(r.recording_path))}`,
+          }
+        : {}),
       ...(r.lead_id ? { leadId: String(r.lead_id) } : {}),
       status: requireStr(r.status, "status") as AuditDecision,
       confidence: num(r.confidence),
@@ -637,7 +657,9 @@ export function updateJourney(
     params.push(patch.doNotCall ? 1 : 0)
   }
   params.push(journeyId)
-  db.prepare(`UPDATE journeys SET ${sets.join(", ")} WHERE id = ?`).run(...params)
+  db.prepare(`UPDATE journeys SET ${sets.join(", ")} WHERE id = ?`).run(
+    ...params
+  )
 }
 
 export function updateJourneyFieldValue(
@@ -658,34 +680,40 @@ export function updateJourneyFieldValue(
 // Mutations — Calls
 // ---------------------------------------------------------------------------
 
-export function createCall(db: DatabaseSync, call: {
-  id: string
-  journeyId: string
-  status: CallStatus
-  provider: string
-}) {
+export function createCall(
+  db: DatabaseSync,
+  call: {
+    id: string
+    journeyId: string
+    status: CallStatus
+    provider: string
+  }
+) {
   db.prepare(
     `INSERT INTO calls (id, journey_id, status, provider, safety_score, consent_recorded, created_at, updated_at)
      VALUES (?, ?, ?, ?, 100, 0, datetime('now'), datetime('now'))`
   ).run(call.id, call.journeyId, call.status, call.provider)
 }
 
-export function createJourneyWithCall(db: DatabaseSync, journey: {
-  id: string
-  customerName: string
-  phone: string
-  email: string
-  retailer: string
-  state: string
-  abandonStep: string
-  fields: Array<{
-    key: string
-    label: string
-    value: string | null
-    required: boolean
-  }>
-  callId: string
-}) {
+export function createJourneyWithCall(
+  db: DatabaseSync,
+  journey: {
+    id: string
+    customerName: string
+    phone: string
+    email: string
+    retailer: string
+    state: string
+    abandonStep: string
+    fields: Array<{
+      key: string
+      label: string
+      value: string | null
+      required: boolean
+    }>
+    callId: string
+  }
+) {
   db.prepare(
     `INSERT INTO journeys (id, customer_name, phone, email, retailer, state, status, abandon_step, do_not_call)
      VALUES (?, ?, ?, ?, ?, ?, 'dropped', ?, 0)`
@@ -769,27 +797,33 @@ export function updateCall(
   db.prepare(`UPDATE calls SET ${sets.join(", ")} WHERE id = ?`).run(...params)
 }
 
-export function createUtterance(db: DatabaseSync, u: {
-  id: string
-  callId: string
-  speaker: Speaker
-  text: string
-  startMs: number
-  endMs: number
-}) {
+export function createUtterance(
+  db: DatabaseSync,
+  u: {
+    id: string
+    callId: string
+    speaker: Speaker
+    text: string
+    startMs: number
+    endMs: number
+  }
+) {
   db.prepare(
     `INSERT INTO utterances (id, call_id, speaker, text, start_ms, end_ms)
      VALUES (?, ?, ?, ?, ?, ?)`
   ).run(u.id, u.callId, u.speaker, u.text, u.startMs, u.endMs)
 }
 
-export function createHandoff(db: DatabaseSync, h: {
-  callId: string
-  reason: HandoffReason
-  summary: string
-  collected: Array<{ label: string; value: string }>
-  remaining: string[]
-}) {
+export function createHandoff(
+  db: DatabaseSync,
+  h: {
+    callId: string
+    reason: HandoffReason
+    summary: string
+    collected: Array<{ label: string; value: string }>
+    remaining: string[]
+  }
+) {
   db.prepare(
     `INSERT INTO handoffs (call_id, reason, summary, collected, remaining)
      VALUES (?, ?, ?, ?, ?)`
@@ -806,17 +840,20 @@ export function createHandoff(db: DatabaseSync, h: {
 // Mutations — Audits
 // ---------------------------------------------------------------------------
 
-export function createAudit(db: DatabaseSync, audit: {
-  id: string
-  leadName: string
-  agentName: string
-  retailer: string
-  recordingPath?: string
-  status: AuditDecision
-  confidence: number
-  aiSummary: string
-  leadId?: string
-}) {
+export function createAudit(
+  db: DatabaseSync,
+  audit: {
+    id: string
+    leadName: string
+    agentName: string
+    retailer: string
+    recordingPath?: string
+    status: AuditDecision
+    confidence: number
+    aiSummary: string
+    leadId?: string
+  }
+) {
   db.prepare(
     `INSERT INTO audits (id, lead_name, agent_name, retailer, recording_path, status, confidence, ai_summary, lead_id)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -833,7 +870,11 @@ export function createAudit(db: DatabaseSync, audit: {
   )
 }
 
-export function createAuditTranscript(db: DatabaseSync, auditId: string, utterances: Utterance[]) {
+export function createAuditTranscript(
+  db: DatabaseSync,
+  auditId: string,
+  utterances: Utterance[]
+) {
   const stmt = db.prepare(
     `INSERT INTO audit_transcripts (id, audit_id, speaker, text, start_ms, end_ms, position)
      VALUES (?, ?, ?, ?, ?, ?, ?)`
@@ -843,7 +884,12 @@ export function createAuditTranscript(db: DatabaseSync, auditId: string, utteran
   })
 }
 
-export function createAuditCheck(db: DatabaseSync, auditId: string, check: AuditCheck, position: number) {
+export function createAuditCheck(
+  db: DatabaseSync,
+  auditId: string,
+  check: AuditCheck,
+  position: number
+) {
   const checkRowId = `${auditId}:${check.id}`
   db.prepare(
     `INSERT INTO audit_checks (id, audit_id, label, check_type, critical, verdict, confidence, finding, position)
@@ -863,22 +909,34 @@ export function createAuditCheck(db: DatabaseSync, auditId: string, check: Audit
     db.prepare(
       `INSERT INTO audit_evidence (id, check_id, transcript_id, start_ms, end_ms, quote, correct_value)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run(`${checkRowId}-ev-${e.utteranceId}-${e.startMs}`, checkRowId, e.utteranceId, e.startMs, e.endMs, e.quote, e.correctValue ?? null)
+    ).run(
+      `${checkRowId}-ev-${e.utteranceId}-${e.startMs}`,
+      checkRowId,
+      e.utteranceId,
+      e.startMs,
+      e.endMs,
+      e.quote,
+      e.correctValue ?? null
+    )
   }
 }
 
-export function createAuditFull(db: DatabaseSync, auditId: string, audit: {
-  leadName: string
-  agentName: string
-  retailer: string
-  recordingPath?: string
-  status: AuditDecision
-  confidence: number
-  aiSummary: string
-  transcript: Utterance[]
-  checks: AuditCheck[]
-  leadId?: string
-}) {
+export function createAuditFull(
+  db: DatabaseSync,
+  auditId: string,
+  audit: {
+    leadName: string
+    agentName: string
+    retailer: string
+    recordingPath?: string
+    status: AuditDecision
+    confidence: number
+    aiSummary: string
+    transcript: Utterance[]
+    checks: AuditCheck[]
+    leadId?: string
+  }
+) {
   db.exec("BEGIN TRANSACTION")
   try {
     createAudit(db, { id: auditId, ...audit })
@@ -908,13 +966,16 @@ export function overrideAudit(
 // Lead recordings
 // ---------------------------------------------------------------------------
 
-export function saveLeadRecording(db: DatabaseSync, r: {
-  leadId: string
-  filename: string
-  mime: string
-  durationMs: number | null
-  transcript: unknown[]
-}) {
+export function saveLeadRecording(
+  db: DatabaseSync,
+  r: {
+    leadId: string
+    filename: string
+    mime: string
+    durationMs: number | null
+    transcript: unknown[]
+  }
+) {
   db.prepare(
     `INSERT INTO lead_recordings (lead_id, filename, mime, duration_ms, transcript)
      VALUES (?, ?, ?, ?, ?)
@@ -924,10 +985,19 @@ export function saveLeadRecording(db: DatabaseSync, r: {
        duration_ms = excluded.duration_ms,
        transcript = excluded.transcript,
        created_at = datetime('now')`
-  ).run(r.leadId, r.filename, r.mime, r.durationMs ?? null, JSON.stringify(r.transcript))
+  ).run(
+    r.leadId,
+    r.filename,
+    r.mime,
+    r.durationMs ?? null,
+    JSON.stringify(r.transcript)
+  )
 }
 
-export function getLeadRecording(db: DatabaseSync, leadId: string): {
+export function getLeadRecording(
+  db: DatabaseSync,
+  leadId: string
+): {
   filename: string
   mime: string
   durationMs: number | null
@@ -968,12 +1038,16 @@ export function listPlans(db: DatabaseSync): QaPlanRow[] {
     peakRateCents: num(r.peak_rate_cents),
     supplyChargeCents: num(r.supply_charge_cents),
     giftCardDollars: num(r.gift_card_dollars),
-    concessionDisclosureRequired: Number(r.concession_disclosure_required) === 1,
+    concessionDisclosureRequired:
+      Number(r.concession_disclosure_required) === 1,
     recordingDisclaimer: String(r.recording_disclaimer ?? ""),
   }))
 }
 
-export function listCheckDefs(db: DatabaseSync, retailer?: string): Array<{
+export function listCheckDefs(
+  db: DatabaseSync,
+  retailer?: string
+): Array<{
   id: string
   retailer: string
   label: string
@@ -984,8 +1058,16 @@ export function listCheckDefs(db: DatabaseSync, retailer?: string): Array<{
 }> {
   const all = rows<Record<string, SQLOutputValue>>(
     retailer
-      ? db.prepare("SELECT * FROM audit_check_defs WHERE retailer = ? ORDER BY sort_order").all(retailer)
-      : db.prepare("SELECT * FROM audit_check_defs ORDER BY retailer, sort_order").all()
+      ? db
+          .prepare(
+            "SELECT * FROM audit_check_defs WHERE retailer = ? ORDER BY sort_order"
+          )
+          .all(retailer)
+      : db
+          .prepare(
+            "SELECT * FROM audit_check_defs ORDER BY retailer, sort_order"
+          )
+          .all()
   )
   return all.map((r) => ({
     id: requireStr(r.id, "id"),
@@ -1027,7 +1109,8 @@ export function dashboardMetrics(db: DatabaseSync) {
   )
   const total = num(counts.total)
   const hasOverride = num(counts.has_override)
-  const agreement = total > 0 ? Math.round(((total - hasOverride) / total) * 100) : 100
+  const agreement =
+    total > 0 ? Math.round(((total - hasOverride) / total) * 100) : 100
   return {
     total,
     autoPass: num(counts.auto_pass),
