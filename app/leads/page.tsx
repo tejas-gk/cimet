@@ -16,6 +16,7 @@ import {
   MapPinIcon,
   PencilLineIcon,
   PhoneIcon,
+  RefreshCwIcon,
   ShieldCheckIcon,
   UploadIcon,
   UserIcon,
@@ -25,6 +26,8 @@ import Link from "next/link"
 import * as React from "react"
 
 import { CimetAiShell } from "@/components/cimet-ai-shell"
+import { LeadsDataGrid } from "@/components/leads-data-grid"
+import LeadSolarPreview from "@/components/lead-solar-preview"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -42,6 +45,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { useLeads } from "@/hooks/use-leads"
+import { useVoiceRecorder } from "@/hooks/use-voice-recorder"
 import { formatMs } from "@/lib/cimet-demo-data"
 import {
   leadProgress,
@@ -161,6 +165,117 @@ export default function LeadsPage() {
 
   const providerFor = (leadId: string) => providerByLead[leadId] ?? "twilio"
 
+  const recorder = useVoiceRecorder()
+  const [previewLeadId, setPreviewLeadId] = React.useState<string | null>(null)
+  const [previewCallId, setPreviewCallId] = React.useState<string | null>(null)
+  const [previewInitialAudio, setPreviewInitialAudio] = React.useState<
+    string | null
+  >(null)
+
+  const placeCallFromPreview = React.useCallback(
+    async (leadId: string) => {
+      try {
+        setDialState(null)
+        const res = await fetch(
+          `/api/leads/${encodeURIComponent(leadId)}/phone`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              provider: providerFor(leadId),
+              lead: { id: leadId },
+            }),
+          }
+        )
+        const data = (await res.json().catch(() => null)) as any
+        if (!res.ok)
+          throw new Error(data?.error ?? `Call failed (${res.status})`)
+        const callId = data?.data?.callId ?? data?.data?.call?.id ?? null
+        if (!callId) throw new Error("Call not created")
+        // Start the server-side call to get initial greeting audio
+        const startRes = await fetch(
+          `/api/calls/${encodeURIComponent(callId)}/start`,
+          { method: "POST" }
+        )
+        const startData = (await startRes.json().catch(() => null)) as any
+        const audio = startData?.data?.audioBase64 ?? null
+        setPreviewCallId(callId)
+        setPreviewInitialAudio(audio)
+        setDialState({ leadId, kind: "ok", message: `Placed call ${callId}` })
+        return callId
+      } catch (err) {
+        setDialState({
+          leadId,
+          kind: "error",
+          message: err instanceof Error ? err.message : "Failed to place call",
+        })
+        return null
+      }
+    },
+    [providerFor]
+  )
+
+  // Provide a minimal leadContext for preview (expand as needed)
+  const leadContextFor = React.useCallback(
+    (leadId: string) => {
+      const lead = getLead(leadId)
+      if (!lead) return undefined
+      return {
+        name: lead.name ?? "",
+        phone: lead.phone ?? "",
+        email: lead.email ?? "",
+        retailer: lead.retailer ?? "",
+        state: lead.state ?? "",
+        address: lead.address ?? "",
+        postcode: lead.postcode ?? "",
+      }
+    },
+    [getLead]
+  )
+
+  const handleExtractedData = React.useCallback(
+    (data: Partial<Record<string, string>>) => {
+      // Merge extracted fields into the local draft for the lead
+      if (!previewLeadId) return
+      upsertDraft({ id: previewLeadId, ...data })
+    },
+    [previewLeadId, upsertDraft]
+  )
+
+  const handleSaveRecording = React.useCallback(
+    async (base64: string, transcript: string) => {
+      if (!previewLeadId) return
+      try {
+        const form = new FormData()
+        const blob = new Blob(
+          [Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))],
+          { type: "audio/wav" }
+        )
+        form.append(
+          "file",
+          new File([blob], "preview.wav", { type: "audio/wav" })
+        )
+        form.append("leadId", previewLeadId)
+        form.append("transcript", transcript)
+        const res = await fetch(
+          `/api/leads/${encodeURIComponent(previewLeadId)}/recording`,
+          {
+            method: "POST",
+            body: form,
+          }
+        )
+        if (!res.ok) throw new Error("Failed to save recording")
+        const data = (await res.json().catch(() => null)) as any
+        // update draft with recording URL if returned
+        if (data?.recordingUrl)
+          upsertDraft({ id: previewLeadId, recordingUrl: data.recordingUrl })
+      } catch (err) {
+        console.warn("Saving preview recording failed", err)
+      }
+    },
+    [previewLeadId, upsertDraft]
+  )
+
   const markDialed = React.useCallback((leadId: string) => {
     autoDialedRef.current.add(leadId)
     saveAutoDialedLeadIds([...autoDialedRef.current])
@@ -169,6 +284,7 @@ export default function LeadsPage() {
   async function runDial(lead: Lead): Promise<{
     ok: boolean
     message: string
+    callId?: string | null
   }> {
     try {
       const res = await fetch(
@@ -196,16 +312,17 @@ export default function LeadsPage() {
           }),
         }
       )
-      const data = (await res.json().catch(() => null)) as {
-        error?: string
-        data?: { provider?: string; callId?: string }
-      } | null
+      const data = (await res.json().catch(() => null)) as any
       if (!res.ok) {
         throw new Error(data?.error ?? `Call failed (${res.status})`)
       }
+      const callId =
+        (data as any)?.data?.callId ?? (data as any)?.data?.call?.id ?? null
       return {
         ok: true,
         message: `Calling ${lead.phone} via ${providerFor(lead.id)} — the finished call will be audited automatically.`,
+        // expose callId so callers (preview) can switch transport
+        callId,
       }
     } catch (error) {
       return {
@@ -229,6 +346,38 @@ export default function LeadsPage() {
       message: result.message,
     })
     setDialing(null)
+  }
+
+  async function handleSync(lead: Lead) {
+    try {
+      const res = await fetch(
+        `/api/leads/${encodeURIComponent(lead.id)}/sync`,
+        { method: "POST" }
+      )
+      const data = (await res.json().catch(() => null)) as {
+        data?: { fields?: Record<string, string> }
+      } | null
+      if (!res.ok)
+        throw new Error(
+          data?.data?.fields ? "Sync failed" : `Request failed (${res.status})`
+        )
+      const fields = data?.data?.fields ?? {}
+      upsertDraft({
+        id: lead.id,
+        ...fields,
+      })
+      setDialState({
+        leadId: lead.id,
+        kind: "ok",
+        message: "Form data synced from call.",
+      })
+    } catch (error) {
+      setDialState({
+        leadId: lead.id,
+        kind: "error",
+        message: error instanceof Error ? error.message : "Sync failed.",
+      })
+    }
   }
 
   // Auto-call: whenever the toggle is on, dial any submitted lead with a phone
@@ -328,18 +477,11 @@ export default function LeadsPage() {
 
   return (
     <CimetAiShell>
-      <div className="mx-auto grid max-w-7xl gap-5">
-        <div className="grid gap-2">
-          <Badge
-            variant="outline"
-            className="w-fit border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-          >
-            Lead capture
-          </Badge>
-          <h2 className="text-2xl font-semibold tracking-tight">Leads</h2>
-          <p className="max-w-3xl text-sm text-zinc-400">
-            Every lead from the multi-step form lands here. Click any row to
-            open its full details in a drawer.
+      <div className="mx-auto grid w-full min-w-0 gap-4">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h2 className="text-lg font-semibold tracking-tight">Leads</h2>
+          <p className="text-sm text-zinc-500">
+            Click a name for details. Double-click a cell to edit.
           </p>
         </div>
 
@@ -393,178 +535,118 @@ export default function LeadsPage() {
           </div>
         </div>
 
-        {sorted.length === 0 ? (
-          <div className="rounded-xl border border-[#27272a] bg-[#0b0b0c] p-10 text-center">
-            <div className="text-sm text-zinc-400">
-              No leads yet. Submit the multi-step form to add your first one.
-            </div>
-            <Button size="sm" className="mt-4" asChild>
-              <Link href="/lead-form">Open lead form</Link>
-            </Button>
-          </div>
-        ) : (
-          <div className="overflow-x-auto rounded-xl border border-[#27272a] bg-[#0b0b0c]">
-            <table className="w-full min-w-[820px] border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-[#27272a] text-left text-xs tracking-wide text-zinc-500 uppercase">
-                  <th className="px-4 py-3 font-medium">Lead</th>
-                  <th className="px-4 py-3 font-medium">Contact</th>
-                  <th className="px-4 py-3 font-medium">Plan</th>
-                  <th className="px-4 py-3 font-medium">Progress</th>
-                  <th className="px-4 py-3 font-medium">Recording</th>
-                  <th className="px-4 py-3 font-medium">Quality audit</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Updated</th>
-                  <th className="px-4 py-3 font-medium">Call by phone</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((lead) => (
-                  <tr
-                    key={lead.id}
-                    onClick={() => setSelectedId(lead.id)}
-                    className="cursor-pointer border-b border-[#1c1c1f] transition-colors last:border-b-0 hover:bg-[#141416]"
-                  >
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-zinc-100">
-                        {lead.name || "Unnamed lead"}
-                      </div>
-                      <div className="text-xs text-zinc-500">
-                        {lead.company || "No company provided"}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="text-zinc-200">{lead.email || "—"}</div>
-                      <div className="text-xs text-zinc-500">
-                        {lead.phone || "—"}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-zinc-300">
-                      {lead.plan || "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="h-1.5 w-20 overflow-hidden rounded-full bg-[#222226]">
-                          <div
-                            className={
-                              lead.submitted
-                                ? "h-full bg-emerald-500"
-                                : "h-full bg-amber-400"
-                            }
-                            style={{
-                              width: `${Math.max(4, leadProgress(lead))}%`,
-                            }}
-                          />
-                        </div>
-                        <span className="text-xs text-zinc-500">
-                          {leadProgress(lead)}%
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      {lead.recordingUrl && lead.transcript.length > 0 ? (
-                        <span className="flex items-center gap-1.5 text-xs text-emerald-300">
-                          <HeadphonesIcon className="size-3.5" /> Transcribed
-                        </span>
-                      ) : (
-                        <span className="text-xs text-zinc-600">None</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge
-                        variant="outline"
-                        className={qaBadge(lead.qaStatus)}
-                      >
-                        {qaLabel(lead.qaStatus)}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3">
-                      {lead.submitted ? (
-                        <Badge
-                          variant="outline"
-                          className="border-emerald-500/40 text-emerald-300"
-                        >
-                          Submitted
-                        </Badge>
-                      ) : (
-                        <Badge
-                          variant="outline"
-                          className="border-amber-500/40 text-amber-300"
-                        >
-                          Draft
-                        </Badge>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-zinc-500">
-                      {formatTime(lead.updatedAt)}
-                    </td>
-                    <td
-                      className="px-4 py-3"
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Select
-                          value={providerFor(lead.id)}
-                          onValueChange={(value) =>
-                            setProviderByLead((prev) => ({
-                              ...prev,
-                              [lead.id]: value as PhoneProviderId,
-                            }))
-                          }
-                          disabled={dialing === lead.id}
-                        >
-                          <SelectTrigger className="h-8 w-[110px] border-[#34363a] bg-[#111113] text-white">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="twilio">Twilio</SelectItem>
-                            <SelectItem value="retell">Retell</SelectItem>
-                            <SelectItem value="vapi">Vapi</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
-                          disabled={!lead.phone || dialing === lead.id}
-                          onClick={() => handleDial(lead)}
-                        >
-                          {dialing === lead.id ? (
-                            <Loader2Icon className="size-4 animate-spin" />
-                          ) : (
-                            <PhoneIcon className="size-4" />
-                          )}
-                          Call
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="border-[#34363a] bg-[#111113] text-white"
-                          asChild
-                        >
-                          <Link href={`/leads/${lead.id}`}>Open</Link>
-                        </Button>
-                      </div>
-                      {dialState?.leadId === lead.id ? (
-                        <p
-                          className={`mt-1 max-w-[220px] text-xs ${dialState.kind === "ok" ? "text-emerald-300" : "text-red-300"}`}
-                        >
-                          {dialState.message}
-                        </p>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        {dialState && (
+          <p
+            role="status"
+            className={`text-sm ${dialState.kind === "ok" ? "text-emerald-300" : "text-red-300"}`}
+          >
+            {dialState.message}
+          </p>
         )}
+
+        <LeadsDataGrid
+          leads={sorted}
+          onUpdate={upsertDraft}
+          onOpen={setSelectedId}
+          renderActions={(lead) => (
+            <>
+              <div className="flex items-center gap-2">
+                <Select
+                  value={providerFor(lead.id)}
+                  onValueChange={(value) =>
+                    setProviderByLead((prev) => ({
+                      ...prev,
+                      [lead.id]: value as PhoneProviderId,
+                    }))
+                  }
+                  disabled={dialing === lead.id}
+                >
+                  <SelectTrigger className="h-6 w-[100px] border-[#34363a] bg-transparent text-xs text-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="twilio">Twilio</SelectItem>
+                    <SelectItem value="retell">Retell</SelectItem>
+                    <SelectItem value="vapi">Vapi</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-[#34363a] bg-[#111113] text-white"
+                  disabled={dialing === lead.id}
+                  onClick={() => {
+                    setPreviewCallId(null)
+                    setPreviewLeadId(lead.id)
+                  }}
+                >
+                  <HeadphonesIcon className="size-4" />
+                  Preview
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
+                  disabled={!lead.phone || dialing === lead.id}
+                  onClick={() => handleDial(lead)}
+                >
+                  {dialing === lead.id ? (
+                    <Loader2Icon className="size-4 animate-spin" />
+                  ) : (
+                    <PhoneIcon className="size-4" />
+                  )}
+                  Call
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-[#34363a] bg-[#111113] text-white"
+                  disabled={dialing === lead.id}
+                  onClick={() => handleSync(lead)}
+                >
+                  <RefreshCwIcon className="size-4" /> Sync
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-[#34363a] bg-[#111113] text-white"
+                  asChild
+                >
+                  <Link href={`/leads/${lead.id}`}>Open</Link>
+                </Button>
+              </div>
+            </>
+          )}
+        />
+
+        {previewLeadId ? (
+          <div className="fixed top-0 left-0 z-50 flex h-full w-full items-start justify-center p-6">
+            <div className="pointer-events-auto">
+              <LeadSolarPreview
+                onClose={() => {
+                  setPreviewLeadId(null)
+                  setPreviewCallId(null)
+                  setPreviewInitialAudio(null)
+                }}
+                leadId={previewLeadId}
+                callId={previewCallId}
+                initialAudio={previewInitialAudio}
+                onPlaceCall={async (leadId) => {
+                  const callId = await placeCallFromPreview(leadId)
+                  return callId
+                }}
+                onExtractedData={handleExtractedData}
+                onSaveRecording={handleSaveRecording}
+              />
+            </div>
+          </div>
+        ) : null}
 
         <Sheet
           open={selectedId !== null}
           onOpenChange={(open) => !open && setSelectedId(null)}
         >
-          <SheetContent className="w-full border-[#27272a] bg-[#0d0d0f] text-white sm:max-w-sm">
+          <SheetContent className="w-full border-[#27272a] bg-[#0d0d0f] text-white sm:max-w-md">
             {selected ? (
               <>
                 <SheetHeader>

@@ -17,8 +17,10 @@ export type SolarMessage = {
 export type SolarHandoff = {
   reason: string
   summary: string
-  collected: Array<{ label: string; value: string }>
+  collected?: Array<{ label: string; value: string }>
 }
+
+export type ExtractedLeadData = Partial<Record<string, string>>
 
 export type SolarPhase = "idle" | "connected" | "handed-off"
 
@@ -35,6 +37,7 @@ type TurnResult = {
   }>
   handoff: SolarHandoff | null
   needsHumanAgent: boolean
+  extractedData?: ExtractedLeadData
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -61,7 +64,7 @@ async function api<T>(path: string, body: unknown): Promise<T> {
 // Hook
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function useSolarAgent() {
+export function useSolarAgent(basePath = "/api/solar") {
   const [phase, setPhase] = React.useState<SolarPhase>("idle")
   const [messages, setMessages] = React.useState<SolarMessage[]>([])
   const [handoff, setHandoff] = React.useState<SolarHandoff | null>(null)
@@ -74,7 +77,7 @@ export function useSolarAgent() {
     setBusy(true)
     setError(null)
     try {
-      const result = await api<StartResult>("/api/solar/start", {})
+      const result = await api<StartResult>(`${basePath}/start`, {})
       const greeting: SolarMessage = {
         id: crypto.randomUUID(),
         speaker: "ai",
@@ -97,6 +100,7 @@ export function useSolarAgent() {
     async (input: {
       text?: string
       audioBase64?: string
+      leadContext?: Record<string, string>
     }): Promise<TurnResult | null> => {
       setBusy(true)
       setError(null)
@@ -106,12 +110,15 @@ export function useSolarAgent() {
           text: m.text,
         }))
 
-        const result = await api<TurnResult>("/api/solar/turn", {
+        const body: any = {
           text: input.text,
           audioBase64: input.audioBase64,
           history,
           humanAgent: phase === "handed-off",
-        })
+        }
+        if (input.leadContext) body.leadContext = input.leadContext
+
+        const result = await api<TurnResult>(`${basePath}/turn`, body)
 
         // Append the user's spoken / typed message.
         const userMsg: SolarMessage = {
@@ -155,7 +162,7 @@ export function useSolarAgent() {
         text: m.text,
       }))
 
-      const result = await api<TurnResult>("/api/solar/turn", {
+      const result = await api<TurnResult>(`${basePath}/turn`, {
         text: "__ESCALATE__",
         history,
         humanAgent: false,

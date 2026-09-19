@@ -128,25 +128,6 @@ export function CimetAiShell({ children }: { children: React.ReactNode }) {
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-          <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-            <SidebarGroupLabel>Live providers</SidebarGroupLabel>
-            <SidebarGroupContent className="space-y-2 px-2 text-xs text-zinc-400">
-              <div className="rounded-md border border-[#242427] bg-[#111113] p-2">
-                <div className="mb-1 font-medium text-zinc-100">
-                  Sarvam AI (production)
-                </div>
-                <div>Voice TTS: bulbul:v3</div>
-                <div>Voice STT: saaras:v3</div>
-                <div>LLM: sarvam-105b-conversations</div>
-              </div>
-              <Badge
-                variant="outline"
-                className="border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-              >
-                Real model providers active
-              </Badge>
-            </SidebarGroupContent>
-          </SidebarGroup>
         </SidebarContent>
         <SidebarRail />
       </Sidebar>

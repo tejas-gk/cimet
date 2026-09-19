@@ -22,6 +22,10 @@ import type {
   EnergyJourneyStatus,
   HandoffContext,
   HandoffReason,
+  HandoffSeverity,
+  HandoffStatus,
+  HumanAgent,
+  HumanAgentStatus,
   Speaker,
   Utterance,
 } from "@/lib/cimet-ai-types"
@@ -31,6 +35,7 @@ import {
   qaPlans,
   scriptChecks as qaScriptChecks,
 } from "@/lib/server/qa"
+import { ensureAgentsSeeded, ensureSeeded } from "@/lib/server/seed"
 
 // ---------------------------------------------------------------------------
 // Connection
@@ -102,12 +107,34 @@ function migrate(db: DatabaseSync) {
       end_ms    INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS human_agents (
+      id             TEXT PRIMARY KEY,
+      name           TEXT NOT NULL,
+      role           TEXT NOT NULL,
+      status         TEXT NOT NULL DEFAULT 'online',
+      max_concurrent INTEGER NOT NULL DEFAULT 1,
+      created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS handoffs (
-      call_id    TEXT PRIMARY KEY REFERENCES calls(id) ON DELETE CASCADE,
-      reason     TEXT NOT NULL,
-      summary    TEXT NOT NULL,
-      collected  TEXT NOT NULL DEFAULT '[]',
-      remaining  TEXT NOT NULL DEFAULT '[]',
+      call_id          TEXT PRIMARY KEY REFERENCES calls(id) ON DELETE CASCADE,
+      reason           TEXT NOT NULL,
+      summary          TEXT NOT NULL,
+      collected        TEXT NOT NULL DEFAULT '[]',
+      remaining        TEXT NOT NULL DEFAULT '[]',
+      status           TEXT NOT NULL DEFAULT 'waiting',
+      severity         TEXT NOT NULL DEFAULT 'normal',
+      assigned_agent_id TEXT REFERENCES human_agents(id) ON DELETE SET NULL,
+      accepted_at      TEXT,
+      callback_at      TEXT,
+      created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS handoff_events (
+      id        TEXT PRIMARY KEY,
+      call_id   TEXT NOT NULL REFERENCES calls(id) ON DELETE CASCADE,
+      event     TEXT NOT NULL,
+      detail    TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -207,7 +234,31 @@ function migrate(db: DatabaseSync) {
     db.exec("ALTER TABLE audits ADD COLUMN lead_id TEXT")
   }
 
+  // Soft-migrate databases created before handoff routing existed.
+  const handoffColumns = db.prepare("PRAGMA table_info(handoffs)").all() as Array<{
+    name: string
+  }>
+  if (!handoffColumns.some((c) => c.name === "status")) {
+    db.exec(
+      "ALTER TABLE handoffs ADD COLUMN status TEXT NOT NULL DEFAULT 'waiting'"
+    )
+    db.exec(
+      "ALTER TABLE handoffs ADD COLUMN severity TEXT NOT NULL DEFAULT 'normal'"
+    )
+  }
+  if (!handoffColumns.some((c) => c.name === "assigned_agent_id")) {
+    db.exec("ALTER TABLE handoffs ADD COLUMN assigned_agent_id TEXT")
+  }
+  if (!handoffColumns.some((c) => c.name === "accepted_at")) {
+    db.exec("ALTER TABLE handoffs ADD COLUMN accepted_at TEXT")
+  }
+  if (!handoffColumns.some((c) => c.name === "callback_at")) {
+    db.exec("ALTER TABLE handoffs ADD COLUMN callback_at TEXT")
+  }
+
   seedQaTables(db)
+  ensureAgentsSeeded(db)
+  ensureSeeded(db)
 }
 
 /**
@@ -368,6 +419,15 @@ function mapHandoff(r: Record<string, SQLOutputValue>): HandoffContext {
     summary: requireStr(r.summary, "summary"),
     collected: JSON.parse(String(r.collected ?? "[]")),
     remaining: JSON.parse(String(r.remaining ?? "[]")),
+    status: (r.status ?? "waiting") as HandoffStatus,
+    severity: (r.severity ?? "normal") as HandoffSeverity,
+    ...(r.assigned_agent_id
+      ? { assignedAgentId: String(r.assigned_agent_id) }
+      : {}),
+    ...(r.agent_name ? { assignedAgent: String(r.agent_name) } : {}),
+    ...(r.accepted_at ? { acceptedAt: String(r.accepted_at) } : {}),
+    ...(r.callback_at ? { callbackAt: String(r.callback_at) } : {}),
+    ...(r.created_at ? { createdAt: String(r.created_at) } : {}),
   }
 }
 
@@ -501,13 +561,42 @@ function getHandoffsByCall(
   const ph = callIds.map(() => "?").join(",")
   const handoffRows = rows<Record<string, SQLOutputValue>>(
     db
-      .prepare(`SELECT * FROM handoffs WHERE call_id IN (${ph})`)
+      .prepare(
+        `SELECT h.*, a.name AS agent_name
+         FROM handoffs h
+         LEFT JOIN human_agents a ON a.id = h.assigned_agent_id
+         WHERE h.call_id IN (${ph})`
+      )
       .all(...callIds)
   )
   const map = new Map<string, HandoffContext>()
+  const waiting: Array<{ callId: string; severity: string; createdAt: string }> = []
   for (const r of handoffRows) {
     map.set(requireStr(r.call_id, "call_id"), mapHandoff(r))
+    const status = String(r.status ?? "waiting")
+    if (status === "waiting") {
+      waiting.push({
+        callId: requireStr(r.call_id, "call_id"),
+        severity: String(r.severity ?? "normal"),
+        createdAt: String(r.created_at ?? ""),
+      })
+    }
   }
+  const severityWeight: Record<string, number> = { "life-support": 3, sensitive: 2, normal: 1 }
+  waiting.sort((a, b) => {
+    const w =
+      (severityWeight[b.severity] ?? 0) - (severityWeight[a.severity] ?? 0)
+    if (w !== 0) return w
+    return a.createdAt.localeCompare(b.createdAt)
+  })
+  waiting.forEach((item, index) => {
+    const entry = map.get(item.callId)
+    if (!entry) return
+    const position = index + 1
+    entry.queuePosition = position
+    entry.etaMinutes =
+      item.severity === "life-support" ? 1 : Math.max(2, position * 3)
+  })
   return map
 }
 
@@ -822,17 +911,129 @@ export function createHandoff(
     summary: string
     collected: Array<{ label: string; value: string }>
     remaining: string[]
+    status?: HandoffStatus
+    severity?: HandoffSeverity
+    assignedAgentId?: string
+    callbackAt?: string
   }
 ) {
   db.prepare(
-    `INSERT INTO handoffs (call_id, reason, summary, collected, remaining)
-     VALUES (?, ?, ?, ?, ?)`
+    `INSERT INTO handoffs (call_id, reason, summary, collected, remaining, status, severity, assigned_agent_id, callback_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     h.callId,
     h.reason,
     h.summary,
     JSON.stringify(h.collected),
-    JSON.stringify(h.remaining)
+    JSON.stringify(h.remaining),
+    h.status ?? "waiting",
+    h.severity ?? "normal",
+    h.assignedAgentId ?? null,
+    h.callbackAt ?? null
+  )
+}
+
+export function updateHandoff(
+  db: DatabaseSync,
+  callId: string,
+  patch: {
+    status?: HandoffStatus
+    assignedAgentId?: string | null
+    acceptedAt?: string | null
+    callbackAt?: string | null
+  }
+) {
+  const sets: string[] = []
+  const params: (string | number | null)[] = []
+  if (patch.status !== undefined) {
+    sets.push("status = ?")
+    params.push(patch.status)
+  }
+  if (patch.assignedAgentId !== undefined) {
+    sets.push("assigned_agent_id = ?")
+    params.push(patch.assignedAgentId)
+  }
+  if (patch.acceptedAt !== undefined) {
+    sets.push("accepted_at = ?")
+    params.push(patch.acceptedAt)
+  }
+  if (patch.callbackAt !== undefined) {
+    sets.push("callback_at = ?")
+    params.push(patch.callbackAt)
+  }
+  if (sets.length === 0) return
+  params.push(callId)
+  db.prepare(`UPDATE handoffs SET ${sets.join(", ")} WHERE call_id = ?`).run(
+    ...params
+  )
+}
+
+export function appendHandoffEvent(
+  db: DatabaseSync,
+  callId: string,
+  event: string,
+  detail = ""
+) {
+  db.prepare(
+    `INSERT INTO handoff_events (id, call_id, event, detail)
+     VALUES (?, ?, ?, ?)`
+  ).run(crypto.randomUUID(), callId, event, detail)
+}
+
+// ---------------------------------------------------------------------------
+// Human agents
+// ---------------------------------------------------------------------------
+
+export function listHumanAgents(db: DatabaseSync): HumanAgent[] {
+  const agents = rows<Record<string, SQLOutputValue>>(
+    db.prepare("SELECT * FROM human_agents ORDER BY created_at, name").all()
+  )
+  return agents.map((r) => {
+    const id = requireStr(r.id, "agent_id")
+    const activeHandoffs = num(
+      row<Record<string, SQLOutputValue>>(
+        db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM handoffs
+             WHERE assigned_agent_id = ? AND status IN ('assigned', 'accepted')`
+          )
+          .get(id)
+      ).n
+    )
+    return {
+      id,
+      name: requireStr(r.name, "agent_name"),
+      role: requireStr(r.role, "agent_role"),
+      status: requireStr(r.status, "agent_status") as HumanAgentStatus,
+      maxConcurrent: num(r.max_concurrent),
+      activeHandoffs,
+    }
+  })
+}
+
+export function createHumanAgent(
+  db: DatabaseSync,
+  agent: { id: string; name: string; role: string; maxConcurrent?: number }
+) {
+  db.prepare(
+    `INSERT INTO human_agents (id, name, role, max_concurrent)
+     VALUES (?, ?, ?, ?)`
+  ).run(
+    agent.id,
+    agent.name,
+    agent.role,
+    Math.max(1, agent.maxConcurrent ?? 1)
+  )
+}
+
+export function setHumanAgentStatus(
+  db: DatabaseSync,
+  agentId: string,
+  status: HumanAgentStatus
+) {
+  db.prepare("UPDATE human_agents SET status = ? WHERE id = ?").run(
+    status,
+    agentId
   )
 }
 

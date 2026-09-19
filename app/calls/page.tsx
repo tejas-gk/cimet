@@ -5,6 +5,7 @@ import Link from "next/link"
 import * as React from "react"
 
 import { CimetAiShell } from "@/components/cimet-ai-shell"
+import { DispatchQueue } from "@/components/dispatch-queue"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -20,6 +21,7 @@ import type { PhoneProviderId } from "@/lib/server/phone/types"
 function statusTone(status: string) {
   if (status === "completed") return "border-emerald-500/40 text-emerald-300"
   if (status === "handoff") return "border-amber-500/40 text-amber-300"
+  if (status === "callback") return "border-sky-500/40 text-sky-300"
   if (status === "declined") return "border-red-500/40 text-red-300"
   return "border-sky-500/40 text-sky-300"
 }
@@ -77,6 +79,8 @@ export default function CallsPage() {
             {error}
           </div>
         ) : null}
+
+        <DispatchQueue />
 
         <div className="overflow-hidden rounded-xl border border-[#27272a] bg-[#0b0b0c]">
           {loading && calls.length === 0 ? (

@@ -5,10 +5,12 @@ import {
   CheckCircle2Icon,
   CircleStopIcon,
   ClipboardListIcon,
+  HeadsetIcon,
   Loader2Icon,
   MicIcon,
   PhoneCallIcon,
   PhoneForwardedIcon,
+  PhoneOffIcon,
   SendIcon,
   ShieldCheckIcon,
   TimerIcon,
@@ -56,12 +58,18 @@ export function VoiceAgentDetail({ callId }: { callId: string }) {
     startCall,
     sendTurn,
     triggerHandoff,
+    answerHandoff,
+    completeHandoff,
+    releaseHandoff,
+    sendHumanTurn,
+    agents,
     endCallSilently,
     fetchCallAudit,
     runCallAuditNow,
   } = useCimetAi()
   const recorder = useVoiceRecorder()
   const [answer, setAnswer] = React.useState("")
+  const [humanInput, setHumanInput] = React.useState("")
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [note, setNote] = React.useState<string | null>(null)
@@ -81,6 +89,13 @@ export function VoiceAgentDetail({ callId }: { callId: string }) {
     (field) => field.key === call?.currentQuestionKey
   )
   const callActive = !!call && ["consent", "collecting"].includes(call.status)
+  const handoff = call?.handoff ?? null
+  const humanLive = handoff?.status === "accepted"
+  const defaultAgent =
+    agents.find((agent) => agent.status === "online")?.id ??
+    handoff?.assignedAgentId ??
+    agents[0]?.id ??
+    ""
 
   // Hard max for any single recording.
   React.useEffect(() => {
@@ -225,6 +240,76 @@ export function VoiceAgentDetail({ callId }: { callId: string }) {
     }
   }
 
+  // ── Human takeover (the "colleague" answering the handoff) ──────────────
+
+  const handleHumanTurn = async (input: { text?: string; audioBase64?: string }) => {
+    if (!call) return
+    setBusy(true)
+    setError(null)
+    try {
+      await sendHumanTurn(call.id, input)
+      lastActivityRef.current = Date.now()
+      setHumanInput("")
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not send the take-over message"
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleHumanVoice = async () => {
+    if (recorder.recording) {
+      const base64 = await recorder.stop()
+      if (base64) await handleHumanTurn({ audioBase64: base64 })
+      return
+    }
+    setError(null)
+    await recorder.start({
+      onAutoStop: (base64) => base64 && void handleHumanTurn({ audioBase64: base64 }),
+    })
+  }
+
+  const handleHumanComplete = async () => {
+    if (!call) return
+    setBusy(true)
+    setError(null)
+    try {
+      await completeHandoff(call.id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to close the call")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleHumanRelease = async () => {
+    if (!call) return
+    setBusy(true)
+    setError(null)
+    try {
+      await releaseHandoff(call.id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to return to queue")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleAnswerHandoff = async () => {
+    if (!call) return
+    setBusy(true)
+    setError(null)
+    try {
+      await answerHandoff(call.id, handoff?.assignedAgentId ?? defaultAgent)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not take the call")
+    } finally {
+      setBusy(false)
+    }
+  }
+
   // --- render -------------------------------------------------------------
 
   if (!call || !journey) {
@@ -301,7 +386,9 @@ export function VoiceAgentDetail({ callId }: { callId: string }) {
                 className={
                   utterance.speaker === "ai"
                     ? "mr-10 rounded-lg border border-sky-500/20 bg-sky-500/10 p-3"
-                    : "ml-10 rounded-lg border border-zinc-700 bg-[#141416] p-3"
+                    : utterance.speaker === "human-agent"
+                      ? "mr-10 rounded-lg border border-emerald-500/25 bg-emerald-500/10 p-3"
+                      : "ml-10 rounded-lg border border-zinc-700 bg-[#141416] p-3"
                 }
               >
                 <div className="mb-1 text-xs tracking-wide text-zinc-500 uppercase">
@@ -331,7 +418,91 @@ export function VoiceAgentDetail({ callId }: { callId: string }) {
             </div>
           ) : null}
 
-          {call.status === "queued" ? (
+          {humanLive ? (
+            <div className="mt-4 grid gap-3">
+              <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">
+                <HeadsetIcon className="size-4" />
+                You are live with {journey.customerName} — the AI is paused.
+              </div>
+              <div className="flex items-center gap-3">
+                <Button
+                  className="flex-1"
+                  variant={recorder.recording ? "destructive" : "default"}
+                  onClick={() => void handleHumanVoice()}
+                  disabled={busy}
+                >
+                  {recorder.recording ? (
+                    <CircleStopIcon className="size-4" />
+                  ) : (
+                    <MicIcon className="size-4" />
+                  )}
+                  {recorder.recording
+                    ? `Stop · ${Math.round(recorder.durationMs / 1000)}s`
+                    : "Record your reply"}
+                </Button>
+                <div className="h-2 flex-1 overflow-hidden rounded-full bg-[#222226]">
+                  <div
+                    className="h-full rounded-full bg-emerald-400 transition-all"
+                    style={{ width: `${Math.max(4, recorder.level * 100)}%` }}
+                  />
+                </div>
+              </div>
+
+              {handoff.remaining.length > 0 ? (
+                <div className="rounded-lg border border-[#242427] bg-[#111113] p-3 text-xs text-zinc-400">
+                  Still needed by this customer:{" "}
+                  <span className="text-zinc-100">
+                    {handoff.remaining.join(", ")}
+                  </span>
+                </div>
+              ) : null}
+
+              <form
+                className="grid gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  if (!humanInput.trim() || busy) return
+                  void handleHumanTurn({ text: humanInput })
+                }}
+              >
+                <label className="text-xs text-zinc-500">
+                  Speak to the customer as the human agent
+                </label>
+                <Input
+                  value={humanInput}
+                  onChange={(event) => setHumanInput(event.target.value)}
+                  className="border-[#27272a] bg-[#111113] text-white"
+                  placeholder="Type what you say to the customer…"
+                  disabled={busy}
+                />
+                <Button
+                  type="submit"
+                  disabled={busy || !humanInput.trim()}
+                >
+                  <SendIcon className="size-4" /> Send as human
+                </Button>
+              </form>
+
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <Button
+                  variant="outline"
+                  className="border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
+                  disabled={busy}
+                  onClick={() => void handleHumanComplete()}
+                >
+                  <CheckCircle2Icon className="size-4" /> Finish &amp; close call
+                </Button>
+                <Button
+                  variant="outline"
+                  className="border-[#34363a] bg-[#111113] text-white"
+                  disabled={busy}
+                  onClick={() => void handleHumanRelease()}
+                >
+                  <PhoneOffIcon className="size-4" /> Return to queue
+                </Button>
+              </div>
+            </div>
+          ) : call.status === "queued" ? (
             <Button
               className="mt-4 w-full"
               onClick={handleStart}
@@ -551,69 +722,162 @@ export function VoiceAgentDetail({ callId }: { callId: string }) {
           </div>
         </div>
 
-        {/* ─── Warm handoff ─── */}
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
-          <div className="flex items-center gap-2 font-medium text-amber-200">
-            <AlertTriangleIcon className="size-4" /> Warm handoff
-          </div>
-          <p className="mt-2 text-sm text-amber-100/70">
-            Approving hands the current context bundle to a human agent.
-          </p>
-          <div className="mt-3 grid gap-2">
-            <Select
-              value={handoffReason}
-              onValueChange={(value) =>
-                setHandoffReason(value as HandoffReason)
-              }
-              disabled={busy}
-            >
-              <SelectTrigger className="border-[#34363a] bg-[#111113] text-white">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {reasons.map((reason) => (
-                  <SelectItem key={reason.value} value={reason.value}>
-                    {reason.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button
-              variant="outline"
-              className="border-amber-500/40 bg-amber-500/10 text-amber-100"
-              disabled={busy || !callActive}
-              onClick={async () => {
-                setBusy(true)
-                try {
-                  const result = await triggerHandoff(call.id, handoffReason)
-                  if (result.audit) setAudit(result.audit)
-                } catch (err) {
-                  setError(
-                    err instanceof Error
-                      ? err.message
-                      : "Failed to prepare handoff"
-                  )
-                } finally {
-                  setBusy(false)
+        {/* ─── Warm handoff → human dispatch ─── */}
+        {!call.handoff && callActive ? (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+            <div className="flex items-center gap-2 font-medium text-amber-200">
+              <AlertTriangleIcon className="size-4" /> Warm handoff
+            </div>
+            <p className="mt-2 text-sm text-amber-100/70">
+              Approving routes this call to a free human agent — or parks it as
+              a callback / queue-hold when everyone is busy.
+            </p>
+            <div className="mt-3 grid gap-2">
+              <Select
+                value={handoffReason}
+                onValueChange={(value) =>
+                  setHandoffReason(value as HandoffReason)
                 }
-              }}
-            >
-              <PhoneForwardedIcon className="size-4" /> Prepare human handoff
-            </Button>
+                disabled={busy}
+              >
+                <SelectTrigger className="border-[#34363a] bg-[#111113] text-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {reasons.map((reason) => (
+                    <SelectItem key={reason.value} value={reason.value}>
+                      {reason.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outline"
+                className="border-amber-500/40 bg-amber-500/10 text-amber-100"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true)
+                  setError(null)
+                  try {
+                    const result = await triggerHandoff(
+                      call.id,
+                      handoffReason
+                    )
+                    if (result.audioBase64) recorder.play(result.audioBase64)
+                  } catch (err) {
+                    setError(
+                      err instanceof Error
+                        ? err.message
+                        : "Failed to prepare handoff"
+                    )
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+              >
+                <PhoneForwardedIcon className="size-4" /> Route to a human
+              </Button>
+            </div>
           </div>
-          {call.handoff ? (
-            <div className="mt-4 rounded-lg border border-amber-500/30 bg-[#14100a] p-3 text-sm text-amber-50/80">
+        ) : null}
+
+        {call.handoff ? (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+            <div className="flex items-center gap-2 font-medium text-amber-200">
+              <HeadsetIcon className="size-4" /> Human handoff
+            </div>
+
+            <div className="mt-3 grid gap-2 text-sm text-amber-50/80">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge
+                  variant="outline"
+                  className={
+                    call.handoff.severity === "life-support"
+                      ? "border-red-500/40 text-red-300"
+                      : call.handoff.severity === "sensitive"
+                        ? "border-amber-500/40 text-amber-300"
+                        : "border-sky-500/40 text-sky-300"
+                  }
+                >
+                  {call.handoff.severity}
+                </Badge>
+                <Badge
+                  variant="outline"
+                  className={
+                    call.handoff.status === "accepted"
+                      ? "border-emerald-500/40 text-emerald-300"
+                      : "border-[#34363a] text-zinc-300"
+                  }
+                >
+                  {call.handoff.status}
+                </Badge>
+              </div>
+
+              {call.handoff.status === "assigned" ? (
+                <div className="text-sm">
+                  {call.handoff.assignedAgent
+                    ? `Routed to ${call.handoff.assignedAgent} — awaiting the human answer.`
+                    : "Routed to a free agent."}
+                </div>
+              ) : call.handoff.status === "waiting" ? (
+                <div className="text-sm">
+                  Held on the line: position{" "}
+                  {call.handoff.queuePosition ?? 1} in the queue · ~
+                  {call.handoff.etaMinutes ?? 3} min wait.
+                </div>
+              ) : call.handoff.status === "callback" ? (
+                <div className="text-sm">
+                  A callback was scheduled (in ~
+                  {call.handoff.etaMinutes ?? 15} min) because no specialist was
+                  free.
+                </div>
+              ) : call.handoff.status === "accepted" ? (
+                <div className="text-sm">
+                  Live with {call.handoff.assignedAgent ?? "a human agent"} —
+                  use the takeover panel above to talk to the customer.
+                </div>
+              ) : (
+                <div className="text-sm">
+                  Completed by {call.handoff.assignedAgent ?? "the human agent"}.
+                </div>
+              )}
+
+              {call.handoff.status === "assigned" ||
+              call.handoff.status === "waiting" ? (
+                <Button
+                  variant="outline"
+                  className="border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
+                  disabled={busy}
+                  onClick={() => void handleAnswerHandoff()}
+                >
+                  <PhoneCallIcon className="size-4" />{" "}
+                  {call.handoff.status === "assigned"
+                    ? `Answer as ${call.handoff.assignedAgent ?? "an agent"}`
+                    : "Answer from the queue"}
+                </Button>
+              ) : null}
+            </div>
+
+            <div className="mt-3 rounded-lg border border-amber-500/30 bg-[#14100a] p-3 text-sm text-amber-50/80">
               <div className="font-medium text-amber-100">
-                Context bundle ready
+                Context bundle
               </div>
               <div className="mt-1">Reason: {call.handoff.reason}</div>
               <div className="mt-1">Summary: {call.handoff.summary}</div>
+              {call.handoff.collected.length > 0 ? (
+                <div className="mt-1">
+                  Collected:{" "}
+                  {call.handoff.collected
+                    .map((item) => `${item.label} = ${item.value}`)
+                    .join(", ")}
+                </div>
+              ) : null}
               <div className="mt-1">
-                Remaining: {call.handoff.remaining.join(", ") || "none"}
+                Still needed: {call.handoff.remaining.join(", ") || "none"}
               </div>
             </div>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
       </div>
     </div>
   )

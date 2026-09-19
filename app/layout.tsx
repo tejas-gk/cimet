@@ -5,6 +5,7 @@ import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
+import { ClerkProvider } from "@clerk/nextjs"
 
 const geist = Geist({ subsets: ["latin"], variable: "--font-sans" })
 
@@ -30,12 +31,14 @@ export default function RootLayout({
       )}
     >
       <body>
-        <ThemeProvider>
-          <TooltipProvider>
-            {children}
-            <Toaster />
-          </TooltipProvider>
-        </ThemeProvider>
+        {/* <ClerkProvider> */}
+          <ThemeProvider>
+            <TooltipProvider>
+              {children}
+              <Toaster />
+            </TooltipProvider>
+          </ThemeProvider>
+        {/* </ClerkPr ovider> */}
       </body>
     </html>
   )

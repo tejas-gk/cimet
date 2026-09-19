@@ -9,7 +9,7 @@
 
 import type { DatabaseSync } from "node:sqlite"
 
-import { createCall } from "@/lib/server/db"
+import { createCall, createHumanAgent } from "@/lib/server/db"
 
 type SeedField = {
   key: string
@@ -145,6 +145,50 @@ const SEED_JOURNEYS: SeedJourney[] = [
     callId: "call-1003",
   },
 ]
+
+const AGENT_SEEDS: Array<{
+  id: string
+  name: string
+  role: string
+  maxConcurrent: number
+}> = [
+  {
+    id: "agent-david",
+    name: "David Bailey",
+    role: "Team Lead",
+    maxConcurrent: 1,
+  },
+  {
+    id: "agent-priya",
+    name: "Priya Nair",
+    role: "Energy Specialist",
+    maxConcurrent: 1,
+  },
+  {
+    id: "agent-liam",
+    name: "Liam O'Connor",
+    role: "Retention Specialist",
+    maxConcurrent: 2,
+  },
+]
+
+/** Idempotent — human agents are operational config, always ensured. */
+export function ensureAgentsSeeded(db: DatabaseSync) {
+  const exists = db
+    .prepare("SELECT COUNT(*) AS n FROM human_agents")
+    .get() as { n: number }
+  if (Number(exists.n) > 0) return
+  db.exec("BEGIN TRANSACTION")
+  try {
+    for (const agent of AGENT_SEEDS) {
+      createHumanAgent(db, agent)
+    }
+    db.exec("COMMIT")
+  } catch (error) {
+    db.exec("ROLLBACK")
+    throw error
+  }
+}
 
 export function ensureSeeded(db: DatabaseSync) {
   const existing = db.prepare("SELECT COUNT(*) AS n FROM journeys").get() as {

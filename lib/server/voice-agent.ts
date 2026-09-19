@@ -16,7 +16,6 @@ import {
   SARVAM_MODELS,
 } from "@/lib/server/sarvam"
 import {
-  createHandoff,
   createUtterance,
   getJourney,
   listAudits,
@@ -26,6 +25,7 @@ import {
   updateJourneyFieldValue,
 } from "@/lib/server/db"
 import { runCallAudit, saveTurnAudio } from "@/lib/server/call-audit"
+import { routeHandoff } from "@/lib/server/handoff-queue"
 import type {
   AuditRun,
   CallSession,
@@ -65,18 +65,6 @@ type VoiceDecision = {
 
 function nextMissingField(journey: EnergyJourney): EnergyJourneyField | null {
   return journey.fields.find((field) => field.required && !field.value) ?? null
-}
-
-function collectedFields(journey: EnergyJourney) {
-  return journey.fields
-    .filter((field) => field.value)
-    .map((field) => ({ label: field.label, value: field.value as string }))
-}
-
-function remainingFields(journey: EnergyJourney) {
-  return journey.fields
-    .filter((field) => field.required && !field.value)
-    .map((field) => field.label)
 }
 
 export const RECORDING_DISCLOSURE =
@@ -339,17 +327,12 @@ function buildHandoff(
   summary: string,
   safetyScore: number
 ) {
-  createHandoff(db, {
+  return routeHandoff(db, {
     callId,
+    journey,
     reason,
     summary,
-    collected: collectedFields(journey),
-    remaining: remainingFields(journey),
-  })
-  updateCall(db, callId, {
-    status: "handoff",
     safetyScore,
-    endedAt: new Date().toISOString(),
   })
 }
 
@@ -374,7 +357,8 @@ export async function processTurn(params: {
   if (
     existing.status === "completed" ||
     existing.status === "declined" ||
-    existing.status === "handoff"
+    existing.status === "handoff" ||
+    existing.status === "callback"
   ) {
     throw new Error(`Call is already ${existing.status}`)
   }
@@ -490,8 +474,7 @@ export async function processTurn(params: {
       updateJourney(db, journey.id, { doNotCall: true })
       updateCall(db, callId, { status: "declined", endedAt: now, safetyScore })
     } else if (decision.intent === "handoff-request") {
-      saveUtterance(db, callId, "ai", replyText, aiStartMs)
-      buildHandoff(
+      const route = buildHandoff(
         db,
         callId,
         journey,
@@ -500,6 +483,7 @@ export async function processTurn(params: {
           "AI stopped and prepared a warm handoff so the customer does not repeat information already collected.",
         Math.min(safetyScore, 45)
       )
+      saveUtterance(db, callId, "ai", route.message, aiStartMs)
     } else if (decision.intent === "answer") {
       const field = fieldByKey(journey, decision.fieldKey)
       const value = (decision.value ?? "").trim()
@@ -543,9 +527,8 @@ export async function processTurn(params: {
         }
       } else {
         const nextRepeat = (existing.repeatCount ?? 0) + 1
-        saveUtterance(db, callId, "ai", replyText, aiStartMs)
         if (nextRepeat >= 2) {
-          buildHandoff(
+          const route = buildHandoff(
             db,
             callId,
             journey,
@@ -553,16 +536,17 @@ export async function processTurn(params: {
             "The customer did not provide a usable answer after several attempts. AI stopped and prepared a warm handoff so a person can help without repeating collected information.",
             40
           )
+          saveUtterance(db, callId, "ai", route.message, aiStartMs)
         } else {
+          saveUtterance(db, callId, "ai", replyText, aiStartMs)
           updateCall(db, callId, { repeatCount: nextRepeat, safetyScore })
         }
       }
     } else {
       // small-talk / misunderstanding
       const nextRepeat = (existing.repeatCount ?? 0) + 1
-      saveUtterance(db, callId, "ai", replyText, aiStartMs)
       if (nextRepeat >= 2) {
-        buildHandoff(
+        const route = buildHandoff(
           db,
           callId,
           journey,
@@ -570,7 +554,9 @@ export async function processTurn(params: {
           "The customer did not provide a usable answer after several attempts. AI stopped and prepared a warm handoff so a person can help without repeating collected information.",
           40
         )
+        saveUtterance(db, callId, "ai", route.message, aiStartMs)
       } else {
+        saveUtterance(db, callId, "ai", replyText, aiStartMs)
         updateCall(db, callId, { repeatCount: nextRepeat, safetyScore })
       }
     }
@@ -583,7 +569,7 @@ export async function processTurn(params: {
 
   const finalCall = callById(db, callId)!
   let audit: AuditRun | null = null
-  if (["completed", "declined", "handoff"].includes(finalCall.status)) {
+  if (["completed", "declined"].includes(finalCall.status)) {
     audit = await auditFinishedCall(db, callId)
   }
   const last = finalCall.utterances[finalCall.utterances.length - 1]
@@ -610,23 +596,20 @@ export async function triggerHandoff(
   db: DatabaseSync,
   callId: string,
   reason: HandoffReason
-): Promise<{ call: CallSession; audit: AuditRun | null }> {
+): Promise<{
+  call: CallSession
+  audit: AuditRun | null
+  audioBase64: string | null
+}> {
   const call = callById(db, callId)
   if (!call) throw new Error("Call not found")
   const journey = getJourney(db, call.journeyId)
   if (!journey) throw new Error("Journey not found")
+
+  let message = ""
   db.exec("BEGIN TRANSACTION")
   try {
-    saveUtterance(
-      db,
-      callId,
-      "ai",
-      "I'm transferring you to one of my colleagues now. Please stay on the line.",
-      call.utterances.length
-        ? call.utterances[call.utterances.length - 1].endMs + 500
-        : 0
-    )
-    buildHandoff(
+    const route = buildHandoff(
       db,
       callId,
       journey,
@@ -634,13 +617,32 @@ export async function triggerHandoff(
       "Handoff requested by the operator. AI stopped and prepared a warm handoff so the customer does not repeat information already collected.",
       Math.min(call.safetyScore, 45)
     )
+    message = route.message
+    saveUtterance(
+      db,
+      callId,
+      "ai",
+      message,
+      call.utterances.length
+        ? call.utterances[call.utterances.length - 1].endMs + 500
+        : 0
+    )
     db.exec("COMMIT")
   } catch (error) {
     db.exec("ROLLBACK")
     throw error
   }
   const finalCall = callById(db, callId)!
-  return { call: finalCall, audit: await auditFinishedCall(db, callId) }
+  let audioBase64: string | null = null
+  try {
+    audioBase64 = await synthesizeReply(message)
+  } catch (error) {
+    console.warn(
+      "[voice] TTS failed for handoff line, continuing without audio:",
+      error instanceof Error ? error.message : error
+    )
+  }
+  return { call: finalCall, audit: null, audioBase64 }
 }
 
 /** True if there is nothing left to collect for this journey. */

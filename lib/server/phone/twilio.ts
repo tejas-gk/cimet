@@ -3,9 +3,11 @@ import type { DatabaseSync } from "node:sqlite"
 import {
   createHandoff,
   createUtterance,
+  getJourney,
   listAudits,
   listCalls,
   updateCall,
+  updateJourneyFieldValue,
 } from "@/lib/server/db"
 import { runAudit } from "@/lib/server/auditor"
 import { factsFromJourney } from "@/lib/server/call-audit"
@@ -255,10 +257,20 @@ export const twilioPhoneProvider: PhoneProvider = {
     const call = callById(db, callId)
     if (!call) throw new Error("Call not found")
 
+    const journey = getJourney(db, call.journeyId)
+    const leadContext = journey
+      ? Object.fromEntries(
+          journey.fields
+            .filter((field) => field.value)
+            .map((field) => [field.key, field.value])
+        )
+      : {}
+
     const result = await processSolarTurn({
       text,
       history: solarHistory(call.utterances),
       humanAgent: !!call.handoff || isHumanAgentActive(call.utterances),
+      leadContext,
     })
 
     db.exec("BEGIN TRANSACTION")
@@ -272,12 +284,20 @@ export const twilioPhoneProvider: PhoneProvider = {
         startMs += Math.max(1800, turn.text.length * 45) + 500
       }
 
+      if (result.extractedData) {
+        for (const [key, value] of Object.entries(result.extractedData)) {
+          if (value && value.trim().length > 0) {
+            updateJourneyFieldValue(db, call.journeyId, key, value, "ai")
+          }
+        }
+      }
+
       if (result.handoff && !call.handoff) {
         createHandoff(db, {
           callId,
           reason: result.handoff.reason,
           summary: result.handoff.summary,
-          collected: result.handoff.collected,
+          collected: result.handoff.collected ?? [],
           remaining: [],
         })
         updateCall(db, callId, { status: "handoff" })

@@ -377,7 +377,8 @@ export default function SolarSalesPage() {
                   <span className="text-zinc-500">Summary:</span>{" "}
                   <span className="text-zinc-100">{agent.handoff.summary}</span>
                 </div>
-                {agent.handoff.collected.length > 0 ? (
+                {agent.handoff.collected &&
+                agent.handoff.collected.length > 0 ? (
                   <div className="grid gap-1.5">
                     <div className="text-zinc-500">Collected so far:</div>
                     {agent.handoff.collected.map((item, index) => (

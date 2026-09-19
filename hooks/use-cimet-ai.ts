@@ -7,7 +7,11 @@ import type {
   AuditRun,
   EnergyJourney,
   CallSession,
+  HandoffQueueItem,
   HandoffReason,
+  HumanAgent,
+  HumanAgentStatus,
+  HumanTurnResult,
 } from "@/lib/cimet-ai-types"
 import type { PhoneProviderId } from "@/lib/server/phone/types"
 
@@ -65,6 +69,8 @@ export function useCimetAi() {
   const [journeys, setJourneys] = React.useState<EnergyJourney[]>([])
   const [calls, setCalls] = React.useState<CallSession[]>([])
   const [audits, setAudits] = React.useState<AuditRun[]>([])
+  const [queue, setQueue] = React.useState<HandoffQueueItem[]>([])
+  const [agents, setAgents] = React.useState<HumanAgent[]>([])
   const [dashboard, setDashboard] = React.useState<DashboardMetrics>({
     total: 0,
     autoPass: 0,
@@ -80,18 +86,22 @@ export function useCimetAi() {
   const refresh = React.useCallback(async () => {
     setRefreshing(true)
     try {
-      const [journeyData, callData, auditData, dashboardData] =
+      const [journeyData, callData, auditData, queueData, agentData, dashboardData] =
         await Promise.all([
           api<EnergyJourney[]>("/api/journeys"),
           api<Array<CallSession & { journey: EnergyJourney | null }>>(
             "/api/calls"
           ),
           api<AuditRun[]>("/api/audits"),
+          api<HandoffQueueItem[]>("/api/handoffs"),
+          api<HumanAgent[]>("/api/agents"),
           api<DashboardMetrics>("/api/dashboard"),
         ])
       setJourneys(journeyData)
       setCalls(callData)
       setAudits(auditData)
+      setQueue(queueData)
+      setAgents(agentData)
       setDashboard(dashboardData)
       setError(null)
     } catch (err) {
@@ -148,12 +158,90 @@ export function useCimetAi() {
   )
 
   const triggerHandoff = React.useCallback(
-    async (callId: string, reason: HandoffReason) => {
-      const result = await api<{ call: CallSession; audit: AuditRun | null }>(
-        `/api/calls/${callId}/handoff`,
+    async (
+      callId: string,
+      reason: HandoffReason
+    ): Promise<{
+      call: CallSession
+      audit: AuditRun | null
+      audioBase64: string | null
+    }> => {
+      const result = await api<{
+        call: CallSession
+        audit: AuditRun | null
+        audioBase64: string | null
+      }>(`/api/calls/${callId}/handoff`, {
+        method: "POST",
+        body: { reason },
+      })
+      await refresh()
+      return result
+    },
+    [refresh]
+  )
+
+  const answerHandoff = React.useCallback(
+    async (callId: string, agentId: string) => {
+      await api(`/api/handoffs/${callId}`, {
+        method: "POST",
+        body: { action: "accept", agentId },
+      })
+      await refresh()
+    },
+    [refresh]
+  )
+
+  const completeHandoff = React.useCallback(
+    async (callId: string) => {
+      await api(`/api/handoffs/${callId}`, {
+        method: "POST",
+        body: { action: "complete" },
+      })
+      await refresh()
+    },
+    [refresh]
+  )
+
+  const releaseHandoff = React.useCallback(
+    async (callId: string) => {
+      await api(`/api/handoffs/${callId}`, {
+        method: "POST",
+        body: { action: "release" },
+      })
+      await refresh()
+    },
+    [refresh]
+  )
+
+  const convertToCallback = React.useCallback(
+    async (callId: string) => {
+      await api(`/api/handoffs/${callId}`, {
+        method: "POST",
+        body: { action: "callback" },
+      })
+      await refresh()
+    },
+    [refresh]
+  )
+
+  const setAgentStatus = React.useCallback(
+    async (agentId: string, status: HumanAgentStatus) => {
+      await api(`/api/agents`, {
+        method: "PATCH",
+        body: { id: agentId, status },
+      })
+      await refresh()
+    },
+    [refresh]
+  )
+
+  const sendHumanTurn = React.useCallback(
+    async (callId: string, input: TurnInput): Promise<HumanTurnResult> => {
+      const result = await api<HumanTurnResult>(
+        `/api/calls/${callId}/human-turn`,
         {
           method: "POST",
-          body: { reason },
+          body: input,
         }
       )
       await refresh()
@@ -256,6 +344,8 @@ export function useCimetAi() {
     journeys,
     calls,
     audits,
+    queue,
+    agents,
     dashboard,
     loading,
     refreshing,
@@ -267,6 +357,12 @@ export function useCimetAi() {
     startCall,
     sendTurn,
     triggerHandoff,
+    answerHandoff,
+    completeHandoff,
+    releaseHandoff,
+    convertToCallback,
+    setAgentStatus,
+    sendHumanTurn,
     endCallSilently,
     fetchCallAudit,
     runCallAuditNow,

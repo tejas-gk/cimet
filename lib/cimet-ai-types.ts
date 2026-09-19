@@ -36,6 +36,7 @@ export type CallStatus =
   | "consent"
   | "collecting"
   | "handoff"
+  | "callback"
   | "completed"
   | "declined"
 
@@ -57,11 +58,52 @@ export type HandoffReason =
   | "sensitive-topic"
   | "repeated-misunderstanding"
 
+export type HandoffSeverity = "normal" | "sensitive" | "life-support"
+export type HandoffStatus =
+  | "assigned"
+  | "accepted"
+  | "waiting"
+  | "callback"
+  | "completed"
+
 export type HandoffContext = {
   reason: HandoffReason
   summary: string
   collected: Array<{ label: string; value: string }>
   remaining: string[]
+  status: HandoffStatus
+  severity: HandoffSeverity
+  assignedAgentId?: string
+  assignedAgent?: string
+  queuePosition?: number
+  etaMinutes?: number
+  callbackAt?: string
+  createdAt?: string
+  acceptedAt?: string
+}
+
+export type HumanAgentStatus = "online" | "away" | "busy"
+
+export type HumanAgent = {
+  id: string
+  name: string
+  role: string
+  status: HumanAgentStatus
+  maxConcurrent: number
+  activeHandoffs: number
+}
+
+export type HandoffQueueItem = {
+  callId: string
+  callStatus: CallStatus
+  customerName: string
+  retailer: string
+  state: string
+  handoff: HandoffContext
+}
+
+export type HumanTurnResult = {
+  call: CallSession
 }
 
 export type CallSession = {
