@@ -1,41 +1,42 @@
 "use client"
 
 import * as React from "react"
-import { ThemeProvider as NextThemesProvider, useTheme } from "next-themes"
+
+type Theme = "light" | "dark"
 
 function ThemeProvider({
   children,
-  ...props
-}: React.ComponentProps<typeof NextThemesProvider>) {
-  return (
-    <NextThemesProvider
-      attribute="class"
-      defaultTheme="system"
-      enableSystem
-      disableTransitionOnChange
-      {...props}
-    >
-      <ThemeHotkey />
-      {children}
-    </NextThemesProvider>
-  )
-}
+}: {
+  children: React.ReactNode
+}) {
+  const [theme, setTheme] = React.useState<Theme>("dark")
 
-function isTypingTarget(target: EventTarget | null) {
-  if (!(target instanceof HTMLElement)) {
-    return false
-  }
+  React.useEffect(() => {
+    const stored = localStorage.getItem("theme")
 
-  return (
-    target.isContentEditable ||
-    target.tagName === "INPUT" ||
-    target.tagName === "TEXTAREA" ||
-    target.tagName === "SELECT"
-  )
-}
+    const initialTheme: Theme =
+      stored === "light" || stored === "dark"
+        ? stored
+        : window.matchMedia("(prefers-color-scheme: dark)").matches
+          ? "dark"
+          : "light"
 
-function ThemeHotkey() {
-  const { resolvedTheme, setTheme } = useTheme()
+    setTheme(initialTheme)
+
+    document.documentElement.classList.toggle(
+      "dark",
+      initialTheme === "dark"
+    )
+  }, [])
+
+  React.useEffect(() => {
+    document.documentElement.classList.toggle(
+      "dark",
+      theme === "dark"
+    )
+
+    localStorage.setItem("theme", theme)
+  }, [theme])
 
   React.useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -55,7 +56,9 @@ function ThemeHotkey() {
         return
       }
 
-      setTheme(resolvedTheme === "dark" ? "light" : "dark")
+      setTheme((current) =>
+        current === "dark" ? "light" : "dark"
+      )
     }
 
     window.addEventListener("keydown", onKeyDown)
@@ -63,9 +66,22 @@ function ThemeHotkey() {
     return () => {
       window.removeEventListener("keydown", onKeyDown)
     }
-  }, [resolvedTheme, setTheme])
+  }, [])
 
-  return null
+  return <>{children}</>
+}
+
+function isTypingTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+
+  return (
+    target.isContentEditable ||
+    target.tagName === "INPUT" ||
+    target.tagName === "TEXTAREA" ||
+    target.tagName === "SELECT"
+  )
 }
 
 export { ThemeProvider }
