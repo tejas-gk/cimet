@@ -1,6 +1,6 @@
 "use client"
 
-import { ArrowRightIcon, Loader2Icon, PhoneCallIcon } from "lucide-react"
+import { ArrowRightIcon, Loader2Icon, PhoneCallIcon, UsersIcon } from "lucide-react"
 import Link from "next/link"
 import * as React from "react"
 
@@ -9,11 +9,11 @@ import { DispatchQueue } from "@/components/dispatch-queue"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
 } from "@/components/ui/select"
 import { useCimetAi } from "@/hooks/use-cimet-ai"
 import type { PhoneProviderId } from "@/lib/server/phone/types"
@@ -39,26 +39,32 @@ export default function CallsPage() {
   return (
     <CimetAiShell>
       <div className="mx-auto grid max-w-7xl gap-5">
-        <div className="grid gap-3 md:grid-cols-3">
-          <div className="rounded-xl border border-[#27272a] bg-[#0d0d0f] p-4">
-            <div className="text-2xl font-semibold">{calls.length}</div>
-            <div className="text-xs text-zinc-500">
-              active lead call sessions
+<div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-xl border border-[#27272a] bg-[#0d0d0f] p-4">
+                    <div className="text-2xl font-semibold">{calls.length}</div>
+                    <div className="text-xs text-zinc-500">active lead call sessions</div>
+                </div>
+                <div className="rounded-xl border border-[#27272a] bg-[#0d0d0f] p-4">
+                    <div className="text-2xl font-semibold">
+                        {journeys.filter((journey) => !journey.doNotCall).length}
+                    </div>
+                    <div className="text-xs text-zinc-500">DNC-cleared journeys</div>
+                </div>
+                <div className="rounded-xl border border-[#27272a] bg-[#0d0d0f] p-4">
+                    <div className="text-2xl font-semibold">Sarvam</div>
+                    <div className="text-xs text-zinc-500">voice provider active</div>
+                </div>
             </div>
-          </div>
-          <div className="rounded-xl border border-[#27272a] bg-[#0d0d0f] p-4">
-            <div className="text-2xl font-semibold">
-              {journeys.filter((journey) => !journey.doNotCall).length}
-            </div>
-            <div className="text-xs text-zinc-500">DNC-cleared journeys</div>
-          </div>
-          <div className="rounded-xl border border-[#27272a] bg-[#0d0d0f] p-4">
-            <div className="text-2xl font-semibold">Sarvam</div>
-            <div className="text-xs text-zinc-500">voice provider active</div>
-          </div>
-        </div>
 
-        {error ? (
+            <div className="flex items-center gap-3">
+                <Link href="/agents">
+                    <Button size="sm" variant="outline" className="border-[#34363a] bg-[#111113] text-white">
+                        <UsersIcon className="size-4" /> Manage Agents
+                    </Button>
+                </Link>
+            </div>
+
+            {error ? (
           <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
             {error}
           </div>

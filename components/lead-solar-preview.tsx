@@ -45,8 +45,10 @@ type Props = {
     ) => void
 
     onSaveRecording?: (
-        base64: string,
-        transcript: string
+        lines: Array<{
+            speaker: "customer" | "agent"
+            text: string
+        }>
     ) => Promise<void>
 }
 
@@ -54,57 +56,84 @@ type Props = {
 // Conversation UI
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SPEAKER_LABEL: Record<
-    string,
-    string
-> = {
-    user: "You",
+type SpeakerLabelMap = Record<string, string>
 
-    ai: "Priya · AI sales rep",
+function useSpeakerLabels(): SpeakerLabelMap {
+    const [agents, setAgents] = React.useState<
+        Array<{ id: string; name: string }>
+    >([])
 
-    "human-agent":
-        "David · Human agent",
+    React.useEffect(() => {
+        void fetch("/api/agents")
+            .then((res) => res.json())
+            .then((data) => {
+                const list = (data.data as Array<{ id: string; name: string }>) ?? []
+                setAgents(list)
+            })
+            .catch(() => { })
+    }, [])
+
+    return React.useMemo((): SpeakerLabelMap => {
+        const labels: SpeakerLabelMap = {
+            user: "You",
+            ai: "Priya · AI sales rep",
+        }
+        if (agents.length === 1) {
+            labels["human-agent"] = `${agents[0].name} · Human agent`
+        } else if (agents.length > 1) {
+            labels["human-agent"] = `Human agent`
+        } else {
+            labels["human-agent"] = `Human agent`
+        }
+        return labels
+    }, [agents])
 }
 
-function speakerTone(
-    speaker: string
-) {
+function speakerTone(speaker: string) {
     if (speaker === "user") {
         return "ml-8 rounded-xl border-zinc-700 bg-[#141416]"
     }
-
-    if (
-        speaker === "human-agent"
-    ) {
+    if (speaker === "human-agent") {
         return "mr-8 rounded-xl border-amber-500/30 bg-amber-500/10"
     }
-
     return "mr-8 rounded-xl border-sky-500/30 bg-sky-500/10"
 }
 
-function speakerIcon(
-    speaker: string
-) {
+function speakerIcon(speaker: string) {
     if (speaker === "user") {
-        return (
-            <span className="size-4">
-                🙂
-            </span>
-        )
+        return <span className="size-4">🙂</span>
     }
-
-    if (
-        speaker === "human-agent"
-    ) {
-        return (
-            <HeadphonesIcon className="size-4" />
-        )
+    if (speaker === "human-agent") {
+        return <HeadphonesIcon className="size-4" />
     }
-
-    return (
-        <BotIcon className="size-4" />
-    )
+    return <BotIcon className="size-4" />
 }
+
+type ConversationLine = {
+    speaker: "customer" | "agent"
+    text: string
+}
+
+const toConversationLines = (
+    messages: Array<{ speaker: string; text: string }>
+): ConversationLine[] =>
+    messages
+        .filter((m) => m.text && m.text.trim())
+        .map((m) => ({
+            speaker:
+                m.speaker === "user"
+                    ? "customer"
+                    : "agent",
+            text: m.text,
+        }))
+
+const lineFrom = (
+    speaker: "customer" | "agent",
+    text: string
+): ConversationLine | null =>
+    text && text.trim()
+        ? { speaker, text }
+        : null
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Turn-taking configuration
@@ -167,6 +196,8 @@ export default function LeadSolarPreview({
     const agent =
         useSolarAgent(basePath)
 
+    const speakerLabels = useSpeakerLabels()
+
     const recorder =
         useVoiceRecorder()
 
@@ -225,6 +256,15 @@ export default function LeadSolarPreview({
         placing,
         setPlacing,
     ] = React.useState(false)
+    const [extractedFields, setExtractedFields] = React.useState<Partial<Record<string, string>>>({})
+
+    /**
+     * Accumulated preview conversation (customer + agent lines) that is
+     * reported to the parent via onSaveRecording. We deliberately do NOT
+     * upload any audio for transcription here.
+     */
+    const conversationRef =
+        React.useRef<ConversationLine[]>([])
 
     /**
      * Prevent duplicate submissions caused by:
@@ -387,35 +427,45 @@ export default function LeadSolarPreview({
                     onExtractedData(
                         result.extractedData
                     )
+                    // keep a local copy to merge when placing the real call
+                    setExtractedFields((prev) => ({ ...prev, ...(result.extractedData ?? {}) }))
                 }
 
                 // ─────────────────────────────────────────────────────────────────────
-                // Save preview recording
+                // Save preview transcript
                 // ─────────────────────────────────────────────────────────────────────
 
                 if (
                     onSaveRecording
                 ) {
                     try {
+                        const newLines: ConversationLine[] = []
+                        const customerLine = lineFrom("customer", result.transcript)
+                        if (customerLine) newLines.push(customerLine)
+                        for (const t of result.turns) {
+                            const agentLine = lineFrom("agent", t.text)
+                            if (agentLine) newLines.push(agentLine)
+                        }
+                        conversationRef.current = [
+                            ...conversationRef.current,
+                            ...newLines,
+                        ]
                         await onSaveRecording(
-                            base64,
-                            result.transcript
+                            conversationRef.current
                         )
                     } catch (error) {
                         console.warn(
-                            "Failed to save preview recording",
+                            "Failed to save preview transcript",
                             error
                         )
                     }
                 }
 
                 // ─────────────────────────────────────────────────────────────────────
-                // AI's turn
+                // AI's turn — play all turns including the handoff announcement
                 // ─────────────────────────────────────────────────────────────────────
 
-                await playTurns(
-                    result.turns
-                )
+                await playTurns(result.turns)
             } catch (error) {
                 console.error(
                     "Failed to submit voice turn",
@@ -546,16 +596,97 @@ export default function LeadSolarPreview({
                     onExtractedData(
                         result.extractedData
                     )
+                    setExtractedFields((prev) => ({ ...prev, ...(result.extractedData ?? {}) }))
                 }
 
-                await playTurns(
-                    result.turns
-                )
+                if (
+                    onSaveRecording
+                ) {
+                    try {
+                        const newLines: ConversationLine[] = []
+                        const customerLine = lineFrom("customer", text)
+                        if (customerLine) newLines.push(customerLine)
+                        for (const t of result.turns) {
+                            const agentLine = lineFrom("agent", t.text)
+                            if (agentLine) newLines.push(agentLine)
+                        }
+                        conversationRef.current = [
+                            ...conversationRef.current,
+                            ...newLines,
+                        ]
+                        await onSaveRecording(
+                            conversationRef.current
+                        )
+                    } catch (error) {
+                        console.warn(
+                            "Failed to save preview transcript",
+                            error
+                        )
+                    }
+                }
+
+                await playTurns(result.turns)
             } catch (error) {
                 console.error(
                     "Failed to submit text turn",
                     error
                 )
+            }
+        }
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // Place actual call
+    // ───────────────────────────────────────────────────────────────────────────
+
+    const handlePlaceCall =
+        async () => {
+            if (
+                !leadId ||
+                !onPlaceCall ||
+                placing
+            ) {
+                return
+            }
+
+            setPlacing(true)
+
+            try {
+                const callId = await onPlaceCall(leadId)
+
+                if (callId) {
+                    try {
+                        const utterances = agent.messages.map((m) => ({
+                            speaker: m.speaker === "user" ? "customer" : m.speaker,
+                            text: m.text,
+                        }))
+                        await fetch(`/api/calls/${encodeURIComponent(callId)}/import-utterances`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ utterances }),
+                        })
+                    } catch (err) {
+                        console.warn("Failed to import preview utterances into call", err)
+                    }
+
+                    try {
+                        if (Object.keys(extractedFields).length > 0) {
+                            await fetch(`/api/leads/${encodeURIComponent(leadId)}/merge-data`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ fields: extractedFields }),
+                            })
+                        }
+                    } catch (err) {
+                        console.warn("Failed to merge extracted preview fields into lead", err)
+                    }
+                }
+            } catch (error) {
+                console.error(
+                    "Failed to place call",
+                    error
+                )
+            } finally {
+                setPlacing(false)
             }
         }
 
@@ -574,9 +705,33 @@ export default function LeadSolarPreview({
                     await agent.escalate()
 
                 if (result) {
-                    await playTurns(
-                        result.turns
-                    )
+                    await playTurns(result.turns)
+
+                    if (
+                        onSaveRecording
+                    ) {
+                        try {
+                            const newLines: ConversationLine[] = []
+                            const customerLine = lineFrom("customer", "I'd like to speak with a human, please.")
+                            if (customerLine) newLines.push(customerLine)
+                            for (const t of result.turns) {
+                                const agentLine = lineFrom("agent", t.text)
+                                if (agentLine) newLines.push(agentLine)
+                            }
+                            conversationRef.current = [
+                                ...conversationRef.current,
+                                ...newLines,
+                            ]
+                            await onSaveRecording(
+                                conversationRef.current
+                            )
+                        } catch (error) {
+                            console.warn(
+                                "Failed to save preview transcript",
+                                error
+                            )
+                        }
+                    }
                 }
             } catch (error) {
                 console.error(
@@ -644,45 +799,6 @@ export default function LeadSolarPreview({
         callId,
         initialAudio,
     ])
-
-    // ───────────────────────────────────────────────────────────────────────────
-    // Place actual call
-    // ───────────────────────────────────────────────────────────────────────────
-
-    const handlePlaceCall =
-        async () => {
-            if (
-                !leadId ||
-                !onPlaceCall ||
-                placing
-            ) {
-                return
-            }
-
-            setPlacing(true)
-
-            try {
-                await onPlaceCall(
-                    leadId
-                )
-
-                /**
-                 * Parent updates:
-                 *
-                 * callId
-                 * initialAudio
-                 *
-                 * after the call is created.
-                 */
-            } catch (error) {
-                console.error(
-                    "Failed to place call",
-                    error
-                )
-            } finally {
-                setPlacing(false)
-            }
-        }
 
     // ───────────────────────────────────────────────────────────────────────────
     // Cleanup
@@ -785,36 +901,24 @@ export default function LeadSolarPreview({
                     </div>
 
                     <div className="max-h-64 space-y-2 overflow-y-auto">
-                        {agent.messages.map(
-                            (msg) => (
-                                <div
-                                    key={msg.id}
-                                    className={cn(
-                                        "rounded-lg border p-3",
+                        {(
+                            agent.phase === "handed-off"
+                                ? agent.messages.filter((m) => m.speaker !== "ai")
+                                : agent.messages
+                        ).map((msg) => (
+                            <div
+                                key={msg.id}
+                                className={cn("rounded-lg border p-3", speakerTone(msg.speaker))}
+                            >
+                                <div className="mb-1 flex items-center gap-1.5 text-xs tracking-wide text-zinc-400 uppercase">
+                                    {speakerIcon(msg.speaker)}
 
-                                        speakerTone(
-                                            msg.speaker
-                                        )
-                                    )}
-                                >
-                                    <div className="mb-1 flex items-center gap-1.5 text-xs tracking-wide text-zinc-400 uppercase">
-                                        {speakerIcon(
-                                            msg.speaker
-                                        )}
-
-                                        {
-                                            SPEAKER_LABEL[
-                                            msg.speaker
-                                            ]
-                                        }
-                                    </div>
-
-                                    <div className="text-sm leading-6 text-zinc-100">
-                                        {msg.text}
-                                    </div>
+                                    {speakerLabels[msg.speaker] ?? msg.speaker}
                                 </div>
-                            )
-                        )}
+
+                                <div className="text-sm leading-6 text-zinc-100">{msg.text}</div>
+                            </div>
+                        ))}
                     </div>
                 </div>
 
@@ -855,12 +959,12 @@ export default function LeadSolarPreview({
                                 className="h-full rounded-full bg-sky-400 transition-[width] duration-75"
                                 style={{
                                     width: `${recorder.recording
-                                            ? Math.max(
-                                                4,
-                                                recorder.level *
-                                                100
-                                            )
-                                            : 4
+                                        ? Math.max(
+                                            4,
+                                            recorder.level *
+                                            100
+                                        )
+                                        : 4
                                         }%`,
                                 }}
                             />

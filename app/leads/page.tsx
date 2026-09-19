@@ -265,34 +265,29 @@ export default function LeadsPage() {
   )
 
   const handleSaveRecording = React.useCallback(
-    async (base64: string, transcript: string) => {
+    async (lines: Array<{ speaker: "customer" | "agent"; text: string }>) => {
       if (!previewLeadId) return
       try {
-        const form = new FormData()
-        const blob = new Blob(
-          [Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))],
-          { type: "audio/wav" }
-        )
-        form.append(
-          "file",
-          new File([blob], "preview.wav", { type: "audio/wav" })
-        )
-        form.append("leadId", previewLeadId)
-        form.append("transcript", transcript)
-        const res = await fetch(
-          `/api/leads/${encodeURIComponent(previewLeadId)}/recording`,
-          {
-            method: "POST",
-            body: form,
-          }
-        )
-        if (!res.ok) throw new Error("Failed to save recording")
-        const data = (await res.json().catch(() => null)) as any
-        // update draft with recording URL if returned
-        if (data?.recordingUrl)
-          upsertDraft({ id: previewLeadId, recordingUrl: data.recordingUrl })
+        // No audio upload / re-transcription in /leads — we just keep
+        // whatever the preview conversation produced as the lead's transcript.
+        const transcript: TranscriptSegment[] = lines
+          .filter((line) => line.text && line.text.trim())
+          .map((line, index) => ({
+            id: `preview-${index}`,
+            speaker: line.speaker,
+            text: line.text.trim(),
+            startMs: index * 3000,
+            endMs: (index + 1) * 3000,
+          }))
+        if (transcript.length > 0) {
+          upsertDraft({
+            id: previewLeadId,
+            transcript,
+            humanInteracted: true,
+          })
+        }
       } catch (err) {
-        console.warn("Saving preview recording failed", err)
+        console.warn("Saving preview transcript failed", err)
       }
     },
     [previewLeadId, upsertDraft]
@@ -823,19 +818,22 @@ export default function LeadsPage() {
                       <HeadphonesIcon className="size-3.5" /> Recording & real
                       transcript
                     </h4>
-                    {selected.recordingUrl && selected.transcript.length > 0 ? (
+                    {selected.transcript.length > 0 ? (
                       <div className="grid gap-3">
-                        <audio
-                          controls
-                          src={selected.recordingUrl}
-                          className="w-full"
-                        />
+                        {selected.recordingUrl ? (
+                          <audio
+                            controls
+                            src={selected.recordingUrl}
+                            className="w-full"
+                          />
+                        ) : null}
                         <Badge
                           variant="outline"
                           className="w-fit border-emerald-500/40 text-xs text-emerald-300"
                         >
-                          Real transcript — transcribed from the uploaded
-                          recording
+                          {selected.recordingUrl
+                            ? "Real transcript — transcribed from the uploaded recording"
+                            : "Real transcript — captured from the preview conversation"}
                         </Badge>
                         <div className="grid max-h-72 gap-2 overflow-y-auto pr-1">
                           {selected.transcript.map((segment) => (

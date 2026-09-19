@@ -186,12 +186,13 @@ function migrate(db: DatabaseSync) {
     );
 
     CREATE TABLE IF NOT EXISTS lead_recordings (
-      lead_id     TEXT PRIMARY KEY,
-      filename    TEXT NOT NULL,
-      mime        TEXT NOT NULL,
-      duration_ms INTEGER,
-      transcript  TEXT NOT NULL DEFAULT '[]',
-      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      lead_id             TEXT PRIMARY KEY,
+      filename            TEXT NOT NULL,
+      mime                TEXT NOT NULL,
+      duration_ms         INTEGER,
+      transcript          TEXT NOT NULL DEFAULT '[]',
+      human_interacted    INTEGER NOT NULL DEFAULT 0,
+      created_at          TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS plans (
@@ -1053,6 +1054,13 @@ export function setHumanAgentStatus(
   )
 }
 
+export function deleteHumanAgent(
+  db: DatabaseSync,
+  agentId: string
+) {
+  db.prepare("DELETE FROM human_agents WHERE id = ?").run(agentId)
+}
+
 export function incrementAgentActiveHandoffs(db: DatabaseSync, agentId: string, delta = 1) {
   db.prepare(
     `UPDATE human_agents SET max_concurrent = max_concurrent, status = status WHERE id = ?`
@@ -1198,23 +1206,26 @@ export function saveLeadRecording(
     mime: string
     durationMs: number | null
     transcript: unknown[]
+    humanInteracted?: boolean
   }
 ) {
   db.prepare(
-    `INSERT INTO lead_recordings (lead_id, filename, mime, duration_ms, transcript)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO lead_recordings (lead_id, filename, mime, duration_ms, transcript, human_interacted)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(lead_id) DO UPDATE SET
        filename = excluded.filename,
        mime = excluded.mime,
        duration_ms = excluded.duration_ms,
        transcript = excluded.transcript,
+       human_interacted = excluded.human_interacted,
        created_at = datetime('now')`
   ).run(
     r.leadId,
     r.filename,
     r.mime,
     r.durationMs ?? null,
-    JSON.stringify(r.transcript)
+    JSON.stringify(r.transcript),
+    r.humanInteracted ? 1 : 0
   )
 }
 
@@ -1226,6 +1237,7 @@ export function getLeadRecording(
   mime: string
   durationMs: number | null
   transcript: unknown[]
+  humanInteracted: boolean
 } | null {
   const r = row<Record<string, SQLOutputValue>>(
     db.prepare("SELECT * FROM lead_recordings WHERE lead_id = ?").get(leadId)
@@ -1236,6 +1248,7 @@ export function getLeadRecording(
     mime: requireStr(r.mime, "mime"),
     durationMs: r.duration_ms == null ? null : num(r.duration_ms),
     transcript: JSON.parse(String(r.transcript ?? "[]")) as unknown[],
+    humanInteracted: Number(r.human_interacted) === 1,
   }
 }
 

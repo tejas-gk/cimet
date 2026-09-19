@@ -936,7 +936,7 @@ export const twilioPhoneProvider:
           ),
 
         leadContext,
-      })
+      }, db)
 
     console.log(
       "[twilio] AI result:",
@@ -967,9 +967,9 @@ export const twilioPhoneProvider:
       }
     )
 
-    // ───────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────
     // Persist conversation + extracted fields
-    // ───────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────
 
     db.exec(
       "BEGIN TRANSACTION"
@@ -999,13 +999,18 @@ export const twilioPhoneProvider:
           45
         ) + 500
 
+      // If a handoff was created by this turn (or the call is already in
+      // handoff), DO NOT persist or play any AI utterances. Humans will
+      // speak directly when they accept the handoff.
+      const handoffCreated = Boolean(result.handoff && !call.handoff)
+      const turnsToPersist = (handoffCreated || call.handoff)
+        ? result.turns.filter((t) => String(t.speaker) !== "ai")
+        : result.turns
+
       /**
-       * Store AI/human responses.
+       * Store AI/human responses (filtered for handoff cases).
        */
-      for (
-        const turn of
-        result.turns
-      ) {
+      for (const turn of turnsToPersist) {
         savePhoneUtterance(
           db,
           callId,
@@ -1081,6 +1086,8 @@ export const twilioPhoneProvider:
         result.handoff &&
         !call.handoff
       ) {
+        // Create a handoff but do NOT save an AI utterance or emit any
+        // TTS. The human agent will take over the live conversation.
         createHandoff(
           db,
           {

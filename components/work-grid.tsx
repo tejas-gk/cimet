@@ -2,16 +2,17 @@
 
 import type { ColumnDef } from "@tanstack/react-table"
 import {
-  BarChart3Icon,
-  Grid2X2Icon,
-  LinkIcon,
-  MailIcon,
-  Maximize2Icon,
-  PhoneCallIcon,
-  PlusIcon,
-  ShieldCheckIcon,
-  Table2Icon,
-  WorkflowIcon,
+    BarChart3Icon,
+    Grid2X2Icon,
+    LinkIcon,
+    MailIcon,
+    Maximize2Icon,
+    PhoneCallIcon,
+    PlusIcon,
+    ShieldCheckIcon,
+    Table2Icon,
+    UsersIcon,
+    WorkflowIcon,
 } from "lucide-react"
 import Link from "next/link"
 import * as React from "react"
@@ -506,14 +507,22 @@ export function WorkGrid() {
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton tooltip="QA Dashboard" asChild>
-                    <Link href="/auditor/dashboard">
-                      <BarChart3Icon />
-                      <span>QA Dashboard</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+<SidebarMenuItem>
+    <SidebarMenuButton tooltip="QA Dashboard" asChild>
+        <Link href="/auditor/dashboard">
+            <BarChart3Icon />
+            <span>QA Dashboard</span>
+        </Link>
+    </SidebarMenuButton>
+</SidebarMenuItem>
+<SidebarMenuItem>
+    <SidebarMenuButton tooltip="Human Agents" asChild>
+        <Link href="/agents">
+            <UsersIcon />
+            <span>Human Agents</span>
+        </Link>
+    </SidebarMenuButton>
+</SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

@@ -116,6 +116,8 @@ export async function POST(
     )
   }
 
+  const humanInteracted = form.get("humanInteracted") ? Boolean(form.get("humanInteracted")) : false
+
   const ext = path.extname(file.name || "recording.wav").toLowerCase()
   if (!ALLOWED_EXT.has(ext)) {
     return NextResponse.json(
@@ -176,6 +178,7 @@ export async function POST(
     mime,
     durationMs: null,
     transcript: segments,
+    humanInteracted,
   })
 
   return NextResponse.json({

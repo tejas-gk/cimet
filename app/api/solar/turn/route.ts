@@ -1,3 +1,4 @@
+import { getDb } from "@/lib/server/db"
 import { handle, json, apiError } from "@/lib/server/http"
 import { processSolarTurn } from "@/lib/server/solar-agent"
 import type { SolarConversationLine } from "@/lib/server/solar-agent"
@@ -12,6 +13,7 @@ type TurnBody = {
   audioBase64?: string
   history?: Array<{ speaker?: string; text?: string }>
   humanAgent?: boolean
+  humanAgentName?: string
 }
 
 export const POST = handle(async (req: Request) => {
@@ -47,12 +49,15 @@ export const POST = handle(async (req: Request) => {
         }))
     : []
 
+  const db = getDb()
+
   const result = await processSolarTurn({
     text: text || undefined,
     audioBase64: audio || undefined,
     history,
     humanAgent: !!body.humanAgent,
-  })
+    humanAgentName: body.humanAgentName,
+  }, db)
 
   return json({ data: result })
 })

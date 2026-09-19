@@ -14,11 +14,15 @@
  */
 
 import {
-  chatJson,
-  speechToText,
-  textToSpeech,
-  SARVAM_MODELS,
+    chatJson,
+    speechToText,
+    textToSpeech,
+    SARVAM_MODELS,
 } from "@/lib/server/sarvam"
+
+import { listHumanAgents } from "@/lib/server/db"
+
+import type { DatabaseSync } from "node:sqlite"
 
 import type { ChatMessage } from "@/lib/server/sarvam"
 import type { HandoffReason } from "@/lib/cimet-ai-types"
@@ -662,75 +666,87 @@ function buildRecoverySystemPrompt(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Human agent helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function getAvailableAgentName(db: DatabaseSync): string {
+    const agents = listHumanAgents(db)
+    const available = agents.find((a) => a.status !== "away") ?? agents[0]
+    return available?.name ?? "a human consultant"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Human prompts
 // ─────────────────────────────────────────────────────────────────────────────
 
 function buildHumanSystemPrompt(
-  leadContext: LeadContext,
-  handoffSummary?: string | null
+    leadContext: LeadContext,
+    handoffSummary?: string | null,
+    agentName = "a human consultant"
 ): string {
-  const knownText =
-    Object.entries(
-      cleanLeadContext(leadContext)
-    )
-      .map(
-        ([field, value]) =>
-          `- ${FIELD_LABELS[field as LeadFormField]}: ${value}`
-      )
-      .join("\n") ||
-    "(none)"
+    const knownText =
+        Object.entries(
+            cleanLeadContext(leadContext)
+        )
+            .map(
+                ([field, value]) =>
+                    `- ${FIELD_LABELS[field as LeadFormField]}: ${value}`
+            )
+            .join("\n") ||
+        "(none)"
 
-  return [
-    "You are David, a senior human Energy consultant.",
-    "Priya has just transferred a live customer conversation to you.",
-    "",
-    "KNOWN CUSTOMER INFORMATION:",
-    knownText,
-    "",
-    "HANDOFF CONTEXT:",
-    handoffSummary ||
-    "Continue the customer's existing Energy enquiry.",
-    "",
-    "The customer must NOT have to repeat information already collected.",
-    "Introduce yourself briefly.",
-    "Acknowledge that Priya has passed the context to you.",
-    "Continue professionally and naturally.",
-    "",
-    "Use 1-3 short sentences.",
-    "",
-    "Return ONLY JSON:",
-    '{"reply":"exact words to say"}',
-  ].join("\n")
+    return [
+        `You are ${agentName}, a senior human Energy consultant.`,
+        "Priya has just transferred a live customer conversation to you.",
+        "",
+        "KNOWN CUSTOMER INFORMATION:",
+        knownText,
+        "",
+        "HANDOFF CONTEXT:",
+        handoffSummary ||
+        "Continue the customer's existing Energy enquiry.",
+        "",
+        "The customer must NOT have to repeat information already collected.",
+        "Introduce yourself briefly.",
+        "Acknowledge that Priya has passed the context to you.",
+        "Continue professionally and naturally.",
+        "",
+        "Use 1-3 short sentences.",
+        "",
+        "Return ONLY JSON:",
+        '{"reply":"exact words to say"}',
+    ].join("\n")
 }
 
 function buildHumanContinuePrompt(
-  leadContext: LeadContext
+    leadContext: LeadContext,
+    agentName = "a human consultant"
 ): string {
-  const knownText =
-    Object.entries(
-      cleanLeadContext(leadContext)
-    )
-      .map(
-        ([field, value]) =>
-          `- ${FIELD_LABELS[field as LeadFormField]}: ${value}`
-      )
-      .join("\n") ||
-    "(none)"
+    const knownText =
+        Object.entries(
+            cleanLeadContext(leadContext)
+        )
+            .map(
+                ([field, value]) =>
+                    `- ${FIELD_LABELS[field as LeadFormField]}: ${value}`
+            )
+            .join("\n") ||
+        "(none)"
 
-  return [
-    "You are David, a senior human Energy consultant.",
-    "You are already speaking with this customer after taking over from Priya.",
-    "",
-    "KNOWN INFORMATION:",
-    knownText,
-    "",
-    "Continue professionally.",
-    "Do not ask them to repeat known information.",
-    "Use 1-3 short sentences.",
-    "",
-    "Return ONLY JSON:",
-    '{"reply":"exact words to say"}',
-  ].join("\n")
+    return [
+        `You are ${agentName}, a senior human Energy consultant.`,
+        "You are already speaking with this customer after taking over from Priya.",
+        "",
+        "KNOWN INFORMATION:",
+        knownText,
+        "",
+        "Continue professionally.",
+        "Do not ask them to repeat known information.",
+        "Use 1-3 short sentences.",
+        "",
+        "Return ONLY JSON:",
+        '{"reply":"exact words to say"}',
+    ].join("\n")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1280,6 +1296,8 @@ export async function processSolarTurn(
 
     humanAgent: boolean
 
+    humanAgentName?: string
+
     /**
      * IMPORTANT:
      *
@@ -1287,7 +1305,8 @@ export async function processSolarTurn(
      * lead data on every turn.
      */
     leadContext?: LeadContext
-  }
+  },
+  db?: DatabaseSync
 ): Promise<SolarTurnResult> {
   // ───────────────────────────────────────────────────────────────────────────
   // 1. Resolve customer input
@@ -1367,29 +1386,33 @@ export async function processSolarTurn(
   // ───────────────────────────────────────────────────────────────────────────
 
   if (params.humanAgent) {
-    const humanDecision =
-      await chatJson<{
-        reply?: string
-      }>({
-        model:
-          SARVAM_MODELS.voice,
+      const agentName =
+        params.humanAgentName ?? "a human consultant"
 
-        maxTokens: 500,
+      const humanDecision =
+        await chatJson<{
+          reply?: string
+        }>({
+          model:
+            SARVAM_MODELS.voice,
 
-        messages: toMessages(
-          buildHumanContinuePrompt(
-            existingLead
+          maxTokens: 500,
+
+          messages: toMessages(
+            buildHumanContinuePrompt(
+              existingLead,
+              agentName
+            ),
+
+            params.history,
+
+            displayText
           ),
+        })
 
-          params.history,
-
-          displayText
-        ),
-      })
-
-    const humanText =
-      humanDecision.reply?.trim() ||
-      "Thanks. I have the details already collected here, so you won't need to go over them again. Let me help you from here."
+      const humanText =
+        humanDecision.reply?.trim() ||
+        `Thanks. I have the details already collected here, so you won't need to go over them again. Let me help you from here.`
 
     const audio =
       await synthesize(
@@ -1574,67 +1597,72 @@ export async function processSolarTurn(
     decision.intent ===
     "handoff"
 
-  if (shouldHandoff) {
-    const reason:
-      HandoffReason =
-      forcedEscalation
-        ? "asked-for-human"
-        : decision.handoffReason ??
-        "asked-for-human"
+if (shouldHandoff) {
+        const reason:
+          HandoffReason =
+          forcedEscalation
+            ? "asked-for-human"
+            : decision.handoffReason ??
+            "asked-for-human"
 
-    const aiText =
-      decision.reply ||
-      "Certainly. I'll bring one of our consultants into the conversation and pass across what we've already covered, so you won't need to repeat yourself."
+        const aiText =
+          decision.reply ||
+          "Certainly. I'll bring one of our consultants into the conversation and pass across what we've already covered, so you won't need to repeat yourself."
 
-    const summary =
-      decision.handoffSummary ||
-      `Customer requires human assistance. Information collected has been retained. ${nextMissingField
-        ? `Next journey item is ${FIELD_LABELS[nextMissingField]}.`
-        : "Required journey information is complete."
-      }`
+        const summary =
+          decision.handoffSummary ||
+          `Customer requires human assistance. Information collected has been retained. ${nextMissingField
+            ? `Next journey item is ${FIELD_LABELS[nextMissingField]}.`
+            : "Required journey information is complete."
+          }`
 
-    const humanDecision =
-      await chatJson<{
-        reply?: string
-      }>({
-        model:
-          SARVAM_MODELS.voice,
+        const agentName =
+          params.humanAgentName ??
+          (db ? getAvailableAgentName(db) : "a human consultant")
 
-        maxTokens: 500,
+        const humanDecision =
+          await chatJson<{
+            reply?: string
+          }>({
+            model:
+              SARVAM_MODELS.voice,
 
-        messages: toMessages(
-          buildHumanSystemPrompt(
-            fullLead,
-            summary
-          ),
+            maxTokens: 500,
 
-          [
-            ...params.history,
+            messages: toMessages(
+              buildHumanSystemPrompt(
+                fullLead,
+                summary,
+                agentName
+              ),
 
-            {
-              speaker:
-                "user",
+              [
+                ...params.history,
 
-              text:
-                displayText,
-            },
+                {
+                  speaker:
+                    "user",
 
-            {
-              speaker:
-                "ai",
+                  text:
+                    displayText,
+                },
 
-              text:
-                aiText,
-            },
-          ],
+                {
+                  speaker:
+                    "ai",
 
-          ""
-        ),
-      })
+                  text:
+                    aiText,
+                },
+              ],
 
-    const humanText =
-      humanDecision.reply?.trim() ||
-      "Hi, this is David. Priya has brought me up to speed on what you've discussed, and I have the details you've already provided. I'll take it from here."
+              ""
+            ),
+          })
+
+        const humanText =
+          humanDecision.reply?.trim() ||
+          `Hi, this is ${agentName}. Priya has brought me up to speed on what you've discussed, and I have the details you've already provided. I'll take it from here.`
 
     const [
       aiAudio,

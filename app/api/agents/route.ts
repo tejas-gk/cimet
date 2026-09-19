@@ -1,4 +1,4 @@
-import { getDb, listHumanAgents, setHumanAgentStatus } from "@/lib/server/db"
+import { getDb, listHumanAgents, setHumanAgentStatus, deleteHumanAgent } from "@/lib/server/db"
 import { handle, json, apiError } from "@/lib/server/http"
 import { setAgentStatus } from "@/lib/server/handoff-queue"
 
@@ -63,6 +63,22 @@ export const PATCH = handle(async (req: Request) => {
     if (error instanceof Error && error.message === "Agent not found") {
       return apiError("Agent not found", 404, "not_found")
     }
+    throw error
+  }
+})
+
+export const DELETE = handle(async (req: Request) => {
+  const body = (await req.json().catch(() => null)) as {
+    id?: string
+  } | null
+  const id = body?.id ?? ""
+  if (!id) return apiError("id is required", 400, "missing_agent")
+
+  const db = getDb()
+  try {
+    deleteHumanAgent(db, id)
+    return json({ data: { ok: true } })
+  } catch (error) {
     throw error
   }
 })

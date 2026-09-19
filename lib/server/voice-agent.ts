@@ -521,7 +521,10 @@ export async function processTurn(params: {
       updateJourney(db, journey.id, { doNotCall: true })
       updateCall(db, callId, { status: "declined", endedAt: now, safetyScore })
     } else if (decision.intent === "handoff-request") {
-      const route = buildHandoff(
+      // Route the handoff but do NOT emit any AI speech. The human agent
+      // will speak directly — keep the call in `handoff` state and don't
+      // create an AI utterance or return TTS.
+      buildHandoff(
         db,
         callId,
         journey,
@@ -530,7 +533,6 @@ export async function processTurn(params: {
         "AI stopped and prepared a warm handoff so the customer does not repeat information already collected.",
         Math.min(safetyScore, 45)
       )
-      saveUtterance(db, callId, "ai", route.message, aiStartMs)
     } else if (decision.intent === "answer") {
       const field = fieldByKey(journey, decision.fieldKey)
       const value = (decision.value ?? "").trim()
@@ -575,7 +577,9 @@ export async function processTurn(params: {
       } else {
         const nextRepeat = (existing.repeatCount ?? 0) + 1
         if (nextRepeat >= 2) {
-          const route = buildHandoff(
+          // Route a handoff without emitting any AI speech; humans handle the
+          // live takeover. Do not create an AI utterance here.
+          buildHandoff(
             db,
             callId,
             journey,
@@ -583,7 +587,6 @@ export async function processTurn(params: {
             "The customer did not provide a usable answer after several attempts. AI stopped and prepared a warm handoff so a person can help without repeating collected information.",
             40
           )
-          saveUtterance(db, callId, "ai", route.message, aiStartMs)
         } else {
           saveUtterance(db, callId, "ai", replyText, aiStartMs)
           updateCall(db, callId, { repeatCount: nextRepeat, safetyScore })
@@ -593,7 +596,8 @@ export async function processTurn(params: {
       // small-talk / misunderstanding
       const nextRepeat = (existing.repeatCount ?? 0) + 1
       if (nextRepeat >= 2) {
-        const route = buildHandoff(
+        // Same as above: hand off to a human without generating AI speech.
+        buildHandoff(
           db,
           callId,
           journey,
@@ -601,7 +605,6 @@ export async function processTurn(params: {
           "The customer did not provide a usable answer after several attempts. AI stopped and prepared a warm handoff so a person can help without repeating collected information.",
           40
         )
-        saveUtterance(db, callId, "ai", route.message, aiStartMs)
       } else {
         saveUtterance(db, callId, "ai", replyText, aiStartMs)
         updateCall(db, callId, { repeatCount: nextRepeat, safetyScore })
@@ -664,6 +667,8 @@ export async function triggerHandoff(
   let message = ""
   db.exec("BEGIN TRANSACTION")
   try {
+    // Route the handoff but DO NOT emit any AI speech or save an AI
+    // utterance. Humans will take over the live conversation.
     const route = buildHandoff(
       db,
       callId,
@@ -673,31 +678,15 @@ export async function triggerHandoff(
       Math.min(call.safetyScore, 45)
     )
     message = route.message
-    saveUtterance(
-      db,
-      callId,
-      "ai",
-      message,
-      call.utterances.length
-        ? call.utterances[call.utterances.length - 1].endMs + 500
-        : 0
-    )
     db.exec("COMMIT")
   } catch (error) {
     db.exec("ROLLBACK")
     throw error
   }
   const finalCall = callById(db, callId)!
-  let audioBase64: string | null = null
-  try {
-    audioBase64 = await synthesizeReply(message)
-  } catch (error) {
-    console.warn(
-      "[voice] TTS failed for handoff line, continuing without audio:",
-      error instanceof Error ? error.message : error
-    )
-  }
-  return { call: finalCall, audit: null, audioBase64 }
+  // Do not synthesize any TTS for programmatic handoffs; the human will
+  // speak directly when they accept the handoff. Return null audio.
+  return { call: finalCall, audit: null, audioBase64: null }
 }
 
 /** True if there is nothing left to collect for this journey. */

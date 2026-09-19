@@ -181,14 +181,22 @@ export const plivoPhoneProvider: PhoneProvider = {
         const journey = getJourney(db, call.journeyId)
         if (!journey) throw new Error("Journey not found")
         const leadContext = leadContextFromJourney(journey)
-        const result = await processSolarTurn({ text, history: solarHistory(call.utterances), humanAgent: Boolean(call.handoff), leadContext })
+        const result = await processSolarTurn({ text, history: solarHistory(call.utterances), humanAgent: Boolean(call.handoff), leadContext }, db)
 
         db.exec("BEGIN TRANSACTION")
         try {
             let startMs = nextStartMs(call.utterances)
             savePhoneUtterance(db, callId, "customer", result.transcript, startMs)
             startMs += Math.max(1800, result.transcript.length * 45) + 500
-            for (const turn of result.turns) {
+            // If a handoff was created or the call is already in handoff,
+            // do not persist AI utterances — only persist human-agent
+            // responses. The human will speak live when they accept.
+            const handoffCreated = Boolean(result.handoff && !call.handoff)
+            const turnsToPersist = (handoffCreated || call.handoff)
+                ? result.turns.filter((t) => String(t.speaker) !== "ai")
+                : result.turns
+
+            for (const turn of turnsToPersist) {
                 savePhoneUtterance(db, callId, turn.speaker as Speaker, turn.text, startMs)
                 startMs += Math.max(1800, turn.text.length * 45) + 500
             }
@@ -201,6 +209,8 @@ export const plivoPhoneProvider: PhoneProvider = {
                 }
             }
             if (result.handoff && !call.handoff) {
+                // Create a handoff but DO NOT save any AI utterance or return
+                // TTS audio. Human agent will speak when they accept the handoff.
                 createHandoff(db, { callId, reason: result.handoff.reason, summary: result.handoff.summary, collected: result.handoff.collected ?? [], remaining: result.missingFields ?? [], status: "assigned", severity: "normal" })
                 updateCall(db, callId, { status: "handoff" })
             } else if (result.optedOut) {
